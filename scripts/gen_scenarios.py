@@ -62,13 +62,20 @@ def answers_summary(answers):
     return ", ".join(parts)
 
 
-def ctx(stage, next_key="N/A", answers=None, reason="N/A", client_latest="", is_first="no"):
+AGENT_NAMES = ["Alex", "Jayme", "Marcus", "Sarah", "Priya", "Diego", "Nina", "Omar"]
+CLIENT_NAMES = ["John", "Maria", "Tyler", "Grace", "Luis", "Kayla", "Rosa", "Ethan"]
+
+
+def ctx(stage, next_key="N/A", answers=None, reason="N/A", client_latest="",
+        is_first="no", agent="Alex", client="there"):
     return {
         "context": {
             "Stage": stage,
             "Next question key": next_key,
             "Answers collected": answers_summary(answers or {}),
             "Ineligibility reason": reason,
+            "Agent name": agent,
+            "Client name": client,
             "Client's latest message": client_latest,
             "Is first message": is_first,
         }
@@ -134,6 +141,8 @@ def gen(rng):
         rec = ctx("qualifying", "N/A", {}, "N/A", rng.choice(OFFTOPIC), "no")
         rec["case"] = "offtopic"
 
+    rec["context"]["Agent name"] = rng.choice(AGENT_NAMES)
+    rec["context"]["Client name"] = rng.choice(CLIENT_NAMES)
     rec["kind"] = "scenario"
     return rec
 

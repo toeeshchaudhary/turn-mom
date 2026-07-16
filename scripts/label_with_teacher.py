@@ -26,8 +26,8 @@ import argparse, json, os, re, sys
 SYS_PROMPT = open(os.path.join(os.path.dirname(__file__), "..", "prompts",
                                 "css_system_prompt.txt"), encoding="utf-8").read()
 
-CTX_FIELDS = ["Stage", "Next question key", "Answers collected",
-              "Ineligibility reason", "Client's latest message", "Is first message"]
+CTX_FIELDS = ["Stage", "Next question key", "Answers collected", "Ineligibility reason",
+              "Agent name", "Client name", "Client's latest message", "Is first message"]
 
 
 def render_history(history):
@@ -46,20 +46,28 @@ def render_ctx_block(ctx):
     return "\n".join(lines)
 
 
+NO_TOKENS = ("NEVER output redaction placeholders like {NAME}, {NAME_GIVEN}, or "
+             "{PHONE_NUMBER}. Use the real Agent name / Client name given below, or "
+             "a natural first name — never a bracketed token.")
+
+
 def stream_a_user(task):
     return (
+        f"Agent name: {task.get('agent_name','Alex')}\n"
+        f"Client name: {task.get('client_name','there')}\n\n"
         f"--- CONVERSATION SO FAR ---\n{render_history(task['history'])}\n\n"
         f"--- WHAT THE REP ACTUALLY SENT NEXT ---\n{task['gold_reply']}\n\n"
         "TASK:\n"
         "1. Infer the CONTEXT block for the rep's next turn (fields: Stage, "
-        "Next question key, Answers collected, Ineligibility reason, "
-        "Client's latest message, Is first message).\n"
+        "Next question key, Answers collected, Ineligibility reason, Agent name, "
+        "Client name, Client's latest message, Is first message).\n"
         "2. Produce exactly 3 suggested messages following ALL your voice and "
         "stage rules. Make exactly ONE of the three a lightly-cleaned, natural "
         "text-message version of what the rep actually sent — keep their meaning "
         "and voice, fix typos/ASR errors, strip any phone-call phrasing. The other "
         "two must be genuine, meaningfully different alternatives.\n"
-        'Return ONLY JSON: {"context": {<the six fields>}, "recommendations": '
+        f"{NO_TOKENS}\n"
+        'Return ONLY JSON: {"context": {<the eight fields>}, "recommendations": '
         '[{"suggested_message": str, "confidence": "high|medium|low"}, x3]}'
     )
 
@@ -69,6 +77,7 @@ def stream_b_user(ctx):
         render_ctx_block(ctx) + "\n\n"
         "TASK: produce exactly 3 suggested messages following ALL your voice and "
         "stage rules for this context.\n"
+        f"{NO_TOKENS}\n"
         'Return ONLY JSON: {"recommendations": [{"suggested_message": str, '
         '"confidence": "high|medium|low"}, x3]}'
     )
@@ -92,6 +101,8 @@ def dry_label(task):
     else:
         ctx = {f: "N/A" for f in CTX_FIELDS}
         ctx["Stage"] = "qualifying"
+        ctx["Agent name"] = task.get("agent_name", "Alex")
+        ctx["Client name"] = task.get("client_name", "there")
         ctx["Client's latest message"] = task["history"][-1]["text"][:60]
         ctx["Is first message"] = "yes" if task.get("is_first") else "no"
         base = task["gold_reply"]
@@ -117,6 +128,10 @@ def label(task, dry):
             content = chat([{"role": "system", "content": SYS_PROMPT},
                             {"role": "user", "content": stream_a_user(task)}])
             out = parse_json(content)
+            # trust the known names over anything the teacher inferred
+            out.setdefault("context", {})
+            out["context"]["Agent name"] = task.get("agent_name", "Alex")
+            out["context"]["Client name"] = task.get("client_name", "there")
     out["meta"] = {
         "source": task.get("source", "scenario"),
         "file": task.get("file"),

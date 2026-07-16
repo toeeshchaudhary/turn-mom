@@ -38,6 +38,8 @@ def tasks_from_convo(rec, max_per):
             "is_first": (i == 1),  # agent's first reply follows the opening client msg
             "history": history,
             "gold_reply": t["text"],
+            "agent_name": rec.get("agent_name", "Alex"),
+            "client_name": rec.get("client_name", "there"),
         })
     if len(cands) > max_per:
         # keep the first (greeting-ish) + a random spread of the rest

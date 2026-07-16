@@ -100,12 +100,16 @@ find data/raw/bonzo_clean_redacted -name '*.json' -print0 \
   | xargs -0 python3 scripts/clean_bonzo.py --out data/interim/bonzo_clean.jsonl
 find data/raw/transcripts -name '*.txt' -print0 \
   | xargs -0 python3 scripts/clean_transcript.py --out data/interim/calls_clean.jsonl
+
+# CRITICAL: rehydrate redaction tokens -> realistic surrogates BEFORE anything sees them.
+# Without this the model learns to emit "Hey {NAME}!" literally (the old-model bug).
+python3 scripts/rehydrate.py data/interim/bonzo_clean.jsonl data/interim/calls_clean.jsonl \
+  --out data/interim/hydrated.jsonl
 ```
 
 ### 2b. Build label tasks (both streams)
 ```bash
-python3 scripts/build_label_tasks.py \
-  data/interim/bonzo_clean.jsonl data/interim/calls_clean.jsonl \
+python3 scripts/build_label_tasks.py data/interim/hydrated.jsonl \
   --out data/interim/tasks.jsonl --max-per-convo 6
 python3 scripts/gen_scenarios.py --out data/interim/scenarios.jsonl --n 8000
 cat data/interim/tasks.jsonl data/interim/scenarios.jsonl > data/interim/all_tasks.jsonl

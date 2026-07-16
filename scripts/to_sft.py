@@ -20,8 +20,8 @@ import argparse, json, os, random, sys
 
 SYS_PROMPT = open(os.path.join(os.path.dirname(__file__), "..", "prompts",
                                 "css_system_prompt.txt"), encoding="utf-8").read()
-CTX_FIELDS = ["Stage", "Next question key", "Answers collected",
-              "Ineligibility reason", "Client's latest message", "Is first message"]
+CTX_FIELDS = ["Stage", "Next question key", "Answers collected", "Ineligibility reason",
+              "Agent name", "Client name", "Client's latest message", "Is first message"]
 
 
 def ctx_block(ctx):

@@ -19,6 +19,7 @@ Usage:
 import argparse, json, re, sys
 
 RATE_RE = re.compile(r"\b\d+(\.\d+)?\s?%|\bAPR\b|\$\s?\d", re.I)
+TOKEN_RE = re.compile(r"\{[A-Z][A-Z_]*\}")   # residual redaction placeholder
 FORBIDDEN_INELIGIBLE = re.compile(r"\b(failed|rejected|denied|disqualified)\b", re.I)
 GREETING_RE = re.compile(r"^\s*(hey|hi|hello)\b", re.I)
 
@@ -45,6 +46,8 @@ def check(rec):
             return "more than 3 sentences"
         if RATE_RE.search(m):
             return "mentions rate/APR/$ amount"
+        if TOKEN_RE.search(m):
+            return "contains a redaction placeholder token (e.g. {NAME})"
         msgs.append(m.strip())
 
     firsts = {m.split()[0].lower().strip(".,!?") for m in msgs if m.split()}
