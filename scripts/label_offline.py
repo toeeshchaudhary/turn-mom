@@ -48,7 +48,7 @@ def main():
     ap.add_argument("tasks")
     ap.add_argument("--out", required=True)
     ap.add_argument("--model", default="Qwen/Qwen2.5-14B-Instruct")
-    ap.add_argument("--maxlen", type=int, default=16384)
+    ap.add_argument("--maxlen", type=int, default=32768)
     ap.add_argument("--max-tokens", type=int, default=512)
     ap.add_argument("--temperature", type=float, default=0.7)
     ap.add_argument("--gpu-mem", type=float, default=0.92)
@@ -71,11 +71,28 @@ def main():
     sp = SamplingParams(temperature=args.temperature, max_tokens=args.max_tokens)
 
     convs = [build_messages(t) for t in tasks]
-    outs = llm.chat(convs, sp)   # vLLM batches all of these internally
+
+    # Drop prompts that don't fit the context window — a single over-length prompt
+    # crashes the whole vLLM batch, so filter by ACTUAL token count. System prompt
+    # is fixed, so tokenize it once and only measure the (short) user part per task.
+    tok = llm.get_tokenizer()
+    sys_len = len(tok(SYS_PROMPT).input_ids)
+    budget = args.maxlen - args.max_tokens - 256   # leave room for output + template
+    keep_tasks, keep_convs, dropped = [], [], 0
+    for t, c in zip(tasks, convs):
+        if sys_len + len(tok(c[1]["content"]).input_ids) <= budget:
+            keep_tasks.append(t)
+            keep_convs.append(c)
+        else:
+            dropped += 1
+    print(f"[label_offline] dropped {dropped} over-length prompts; "
+          f"labeling {len(keep_tasks)}", file=sys.stderr)
+
+    outs = llm.chat(keep_convs, sp)   # vLLM batches all of these internally
 
     n = fail = 0
     with open(args.out, "w", encoding="utf-8") as out:
-        for task, o in zip(tasks, outs):
+        for task, o in zip(keep_tasks, outs):
             try:
                 out.write(json.dumps(postprocess(task, o.outputs[0].text)) + "\n")
                 n += 1
