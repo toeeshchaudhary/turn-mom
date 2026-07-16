@@ -147,24 +147,37 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--workers", type=int, default=16,
+                    help="concurrent teacher requests (vLLM batches these)")
     args = ap.parse_args()
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-    n = fail = 0
-    with open(args.tasks, encoding="utf-8") as f, open(args.out, "w", encoding="utf-8") as out:
-        for i, line in enumerate(f):
-            if args.limit and n >= args.limit:
-                break
+    tasks = []
+    with open(args.tasks, encoding="utf-8") as f:
+        for line in f:
             line = line.strip()
-            if not line:
-                continue
-            task = json.loads(line)
+            if line:
+                tasks.append(json.loads(line))
+            if args.limit and len(tasks) >= args.limit:
+                break
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    n = fail = done = 0
+    total = len(tasks)
+    with open(args.out, "w", encoding="utf-8") as out, \
+         ThreadPoolExecutor(max_workers=args.workers) as pool:
+        futs = {pool.submit(label, t, args.dry_run): i for i, t in enumerate(tasks)}
+        for fut in as_completed(futs):
+            done += 1
             try:
-                out.write(json.dumps(label(task, args.dry_run)) + "\n")
+                out.write(json.dumps(fut.result()) + "\n")
+                out.flush()
                 n += 1
             except Exception as e:
                 fail += 1
-                print(f"[fail #{i}] {e}", file=sys.stderr)
+                print(f"[fail #{futs[fut]}] {e}", file=sys.stderr)
+            if done % 200 == 0:
+                print(f"[label] {done}/{total} ({n} ok, {fail} fail)", file=sys.stderr)
     print(f"[label] wrote {n} labeled, {fail} failed -> {args.out}", file=sys.stderr)
 
 
