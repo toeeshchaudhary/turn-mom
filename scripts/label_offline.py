@@ -18,7 +18,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from label_with_teacher import (SYS_PROMPT, stream_a_user, stream_b_user, parse_json)
 
 
+MAX_HISTORY_TURNS = 30   # cap Stream-A history so no prompt overflows the context
+
+
 def build_messages(task):
+    if task.get("kind") != "scenario":
+        h = task.get("history", [])
+        if len(h) > MAX_HISTORY_TURNS:      # keep the most recent turns
+            task = {**task, "history": h[-MAX_HISTORY_TURNS:]}
     user = stream_b_user(task["context"]) if task.get("kind") == "scenario" else stream_a_user(task)
     return [{"role": "system", "content": SYS_PROMPT}, {"role": "user", "content": user}]
 
@@ -41,7 +48,7 @@ def main():
     ap.add_argument("tasks")
     ap.add_argument("--out", required=True)
     ap.add_argument("--model", default="Qwen/Qwen2.5-14B-Instruct")
-    ap.add_argument("--maxlen", type=int, default=8192)
+    ap.add_argument("--maxlen", type=int, default=16384)
     ap.add_argument("--max-tokens", type=int, default=512)
     ap.add_argument("--temperature", type=float, default=0.7)
     ap.add_argument("--gpu-mem", type=float, default=0.92)
