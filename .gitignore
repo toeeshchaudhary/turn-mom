@@ -1,0 +1,20 @@
+# Never publish customer data (real PII lives here — repo is public)
+_samples/
+data/
+
+# Model / training artifacts
+out/
+merged/
+*.jsonl
+# hand-written synthetic eval set (no PII) — keep it
+!eval/cases.jsonl
+*.zip
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Local rclone / secrets (belt-and-suspenders — never commit creds)
+*.conf
+.env
