@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Send, RefreshCw, Sparkles, User, Headset, Loader2, MessageSquare, RotateCcw, Check } from "lucide-react";
+import { Send, RefreshCw, Sparkles, User, Headset, Loader2, MessageSquare, RotateCcw, Check, Code } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
@@ -39,6 +39,8 @@ export default function App() {
   const [input, setInput] = useState("");
   const [recs, setRecs] = useState<Rec[] | null>(null);
   const [lastCtx, setLastCtx] = useState<Record<string, string> | null>(null);
+  const [ctxBlock, setCtxBlock] = useState<string>("");
+  const [showCtx, setShowCtx] = useState(false);
   const [revise, setRevise] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -64,6 +66,7 @@ export default function App() {
       if (!res.ok || data.error) throw new Error(data.error ?? `HTTP ${res.status}`);
       setState(data.state);
       setLastCtx(data.context);
+      setCtxBlock(data.contextBlock ?? "");
       if (assist) setRecs(data.recommendations);
       else setMessages((m) => [...m, { role: "rep", text: data.recommendations[0]?.suggested_message ?? "…" }]);
     } catch (e: any) {
@@ -81,11 +84,12 @@ export default function App() {
       const res = await fetch("/api/suggest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ context: lastCtx, revise: note }),
+        body: JSON.stringify({ context: lastCtx, revise: note, history: messages }),
       });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error ?? `HTTP ${res.status}`);
       setRecs(data.recommendations);
+      setCtxBlock(data.contextBlock ?? ctxBlock);
       setRevise("");
     } catch (e: any) {
       setError(String(e.message ?? e));
@@ -99,6 +103,7 @@ export default function App() {
     setState(INIT);
     setRecs(null);
     setLastCtx(null);
+    setCtxBlock("");
     setInput("");
     setError("");
   }
@@ -124,9 +129,28 @@ export default function App() {
             <Switch checked={assist} onCheckedChange={setAssist} />
             <span className={cn("text-xs font-medium", assist ? "text-foreground" : "text-muted-foreground")}>Assist</span>
           </div>
+          <Button
+            variant={showCtx ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => setShowCtx((v) => !v)}
+            title="Show the CONTEXT the model receives"
+          >
+            <Code className="h-3.5 w-3.5" /> Context
+          </Button>
           <ThemeToggle />
         </div>
       </header>
+
+      {showCtx && (
+        <div className="border-b bg-muted/40 px-4 py-2">
+          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            Context sent to the model {ctxBlock ? "(last turn)" : "— send a message to populate"}
+          </p>
+          <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-md border bg-card p-2 text-xs leading-relaxed text-muted-foreground">
+{ctxBlock || "N/A"}
+          </pre>
+        </div>
+      )}
 
       <div className={cn("grid min-h-0 flex-1 gap-4 p-4", assist ? "grid-cols-1 md:grid-cols-[300px_1fr]" : "grid-cols-1")}>
         {assist && (

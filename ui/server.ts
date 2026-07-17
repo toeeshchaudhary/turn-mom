@@ -27,16 +27,28 @@ const CTX_FIELDS = [
   ["isFirst", "Is first message"],
 ] as const;
 
-function buildContextBlock(ctx: Record<string, string>, revise?: string) {
+function buildContextBlock(ctx: Record<string, string>) {
   const lines = ["--- CURRENT CONTEXT ---"];
   for (const [key, label] of CTX_FIELDS) lines.push(`${label}: ${ctx[key]?.toString().trim() || "N/A"}`);
   lines.push("---");
-  if (revise?.trim())
-    lines.push(
-      `\nThe rep did not like the previous suggestions. Feedback: "${revise.trim()}". ` +
-        `Produce 3 new suggestions that address this while following all your rules.`
-    );
   return lines.join("\n");
+}
+
+function renderHistory(history: { role: string; text: string }[]) {
+  return history.map((m) => `${m.role === "client" ? "CLIENT" : "REP"}: ${m.text}`).join("\n");
+}
+
+// Regenerate = full chat context + the rep's ACTUAL revision request, not a blind re-roll.
+function buildRegenPrompt(ctx: Record<string, string>, revise: string, history?: { role: string; text: string }[]) {
+  const hist = history?.length ? `--- CONVERSATION SO FAR ---\n${renderHistory(history)}\n\n` : "";
+  return (
+    hist +
+    buildContextBlock(ctx) +
+    `\n\nThe rep rejected the previous suggestions and asked for this specific change:\n` +
+    `"${revise.trim()}"\n\n` +
+    `Produce 3 NEW suggested messages that (1) fit this exact conversation, (2) directly do what ` +
+    `the rep asked, and (3) still follow every voice, stage, and guardrail rule.`
+  );
 }
 
 function extractJson(text: string) {
@@ -57,14 +69,18 @@ async function callModel(messages: any[], temperature: number, max_tokens: numbe
   return data.choices?.[0]?.message?.content ?? "";
 }
 
-async function generate(ctx: Record<string, string>, revise?: string) {
-  const user = buildContextBlock(ctx, revise);
+async function generate(
+  ctx: Record<string, string>,
+  revise?: string,
+  history?: { role: string; text: string }[]
+) {
+  const user = revise?.trim() ? buildRegenPrompt(ctx, revise, history) : buildContextBlock(ctx);
   const raw = await callModel(
     [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: user },
     ],
-    revise ? 0.9 : 0.7,
+    revise ? 0.85 : 0.7,
     400
   );
   return { recommendations: extractJson(raw).recommendations ?? [], contextBlock: user };
@@ -159,7 +175,12 @@ async function turn(body: any) {
   };
 
   const gen = await generate(ctx);
-  return { recommendations: gen.recommendations, context: ctx, state: { answers, stage, confirmed } };
+  return {
+    recommendations: gen.recommendations,
+    context: ctx,
+    contextBlock: gen.contextBlock,
+    state: { answers, stage, confirmed },
+  };
 }
 
 const MIME: Record<string, string> = {
@@ -187,8 +208,8 @@ Bun.serve({
     if (url.pathname === "/api/suggest" && req.method === "POST") {
       try {
         const body = await req.json();
-        const gen = await generate(body.context ?? {}, body.revise);
-        return Response.json({ recommendations: gen.recommendations, context: body.context });
+        const gen = await generate(body.context ?? {}, body.revise, body.history);
+        return Response.json({ recommendations: gen.recommendations, context: body.context, contextBlock: gen.contextBlock });
       } catch (e: any) {
         return Response.json({ error: String(e?.message ?? e) }, { status: 500 });
       }

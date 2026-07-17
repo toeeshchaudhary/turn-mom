@@ -1,8 +1,28 @@
 # ChadGPT — working notes
 
-## ⚠️ BIGGER ISSUE FIRST (TBD)
-There's a larger problem to address before the voice-quality retrain. Owner to describe.
-> _(placeholder — fill in from next message)_
+## ⚠️ BIGGER ISSUE FIRST — robustness + judgment (from owner's boss meeting)
+
+Voice polish (backchannel etc.) is the SMALL issue. The BIG one the owner is worried about:
+the model must be **hard to break** and able to make **judgment calls**, because it's the
+foundation for the eventual autonomous agent — not just a pretty recommender.
+
+Owner's concrete worries (NAF CEO said "you're literally just getting started", 5-10yr project):
+1. **Can't be broken by people.** Users WILL try to jailbreak / derail it. It has to hold —
+   stay in the mortgage-CSS lane, not follow injection/off-topic/adversarial prompts.
+2. **Judgment on sensitive human situations.** Real clients say "I lost my wife" / "I lost my
+   job." The model must respond with empathy AND make a call: should an AI even be handling
+   this person right now, or **escalate to a human**? Not every client is worth pursuing
+   (Chad's point) — it needs triage, not scripted qualifying.
+3. **Autonomous-readiness (looming, not now).** Path: 3-rec CSS → LO rec engine → 1 rec →
+   supervised autonomous → autonomous. That beast needs tool-calling, context management,
+   product knowledge (RAG), all of the above. "Uphold the future" = improve the current model
+   in a direction that *extends* to this, don't paint into a corner.
+
+**A meeting with the boss is coming** — owner will be asked his opinion on phasing. We should
+be ready to speak to: current state, the robustness/judgment gap, and how our design extends.
+
+→ So "improve the current model" should prioritize **robustness + sensitive-case judgment +
+  escalation**, ABOVE the cosmetic voice fixes.
 
 ---
 
