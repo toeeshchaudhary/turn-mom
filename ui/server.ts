@@ -72,9 +72,11 @@ async function callModel(messages: any[], temperature: number, max_tokens: numbe
 async function generate(
   ctx: Record<string, string>,
   revise?: string,
-  history?: { role: string; text: string }[]
+  history?: { role: string; text: string }[],
+  directive?: string
 ) {
-  const user = revise?.trim() ? buildRegenPrompt(ctx, revise, history) : buildContextBlock(ctx);
+  let user = revise?.trim() ? buildRegenPrompt(ctx, revise, history) : buildContextBlock(ctx);
+  if (directive && !revise?.trim()) user = user + "\n\n" + directive;
   const raw = await callModel(
     [
       { role: "system", content: SYSTEM_PROMPT },
@@ -86,35 +88,108 @@ async function generate(
   return { recommendations: extractJson(raw).recommendations ?? [], contextBlock: user };
 }
 
-// ---- orchestrator: deterministic screening engine + LLM answer detector ----
+// ---- orchestrator: MAOS situation router + deterministic screening engine ----
 
 const CLASSIFY_SYSTEM =
-  "You extract mortgage-screening answers. Given a QUESTION KEY and the client's latest message, " +
-  "decide whether the message DIRECTLY answers that key, and extract the value.\n" +
-  "Keys and expected values:\n" +
-  "- property_use: how they will use the property (primary residence | second home | investment/rental)\n" +
-  "- bankruptcy_past_3yr: yes | no\n" +
-  "- foreclosure_past_2yr: yes | no\n" +
-  "- late_payments_past_12mo: yes | no\n" +
-  "- confirm: whether they confirm the recap is correct (yes | no)\n" +
-  "If the message is a greeting, a question back, small talk, off-topic, or does not answer THIS key, " +
-  'set answered=false. Return ONLY JSON: {"answered": true|false, "value": "..."}';
+  "You are the situation router for a mortgage TEXT assistant (New American Funding). Read the client's " +
+  "latest message and the current screening question (if any) and classify it. Return ONLY JSON:\n" +
+  '{"intent":"...","emotion":"...","is_answer":true|false,"value":"..."}\n\n' +
+  "intent (pick exactly ONE):\n" +
+  "- answer: directly answers the current screening question\n" +
+  "- greeting: hi/hello opening with no substance\n" +
+  "- loan_question: asks a mortgage/process/program/rate/credit question\n" +
+  "- life_event: shares a hardship or heavy life event (death, illness, hospital, job loss, divorce)\n" +
+  "- not_interested: not interested, changed mind, wants to stop pursuing\n" +
+  "- busy: busy, at work, can't talk now, call me later\n" +
+  "- other_lender: already working with / quoted by another lender\n" +
+  "- rate_shopping: asking for the rate / rate shopping\n" +
+  "- stop: asks to stop, unsubscribe, do not contact\n" +
+  "- escalation: legal threat, attorney, CFPB, complaint, lawsuit\n" +
+  "- inappropriate: sexual, abusive, or clearly inappropriate content\n" +
+  "- offtopic: unrelated to mortgage (politics, random)\n" +
+  "- casual: friendly small talk (how's your day, weather)\n" +
+  "- other: mortgage-related but none of the above\n\n" +
+  "emotion (the client's emotional state right now): distressed | overloaded | neutral | ready\n" +
+  "is_answer / value: ONLY if intent is 'answer' — whether it answers the current question and the extracted value; else false/\"\".\n" +
+  "Be decisive. Any hardship/grief/illness message is intent 'life_event' with emotion 'distressed'.";
 
-async function classify(key: string, message: string): Promise<{ answered: boolean; value: string }> {
+type Situation = { intent: string; emotion: string; is_answer: boolean; value: string };
+
+async function classify(message: string, currentQuestion: string): Promise<Situation> {
   try {
     const raw = await callModel(
       [
         { role: "system", content: CLASSIFY_SYSTEM },
-        { role: "user", content: `Question key: ${key}\nClient message: "${message}"` },
+        { role: "user", content: `Current screening question: ${currentQuestion || "none"}\nClient message: "${message}"` },
       ],
       0,
-      60
+      80
     );
     const j = extractJson(raw);
-    return { answered: !!j.answered, value: String(j.value ?? "") };
+    return {
+      intent: String(j.intent ?? "other"),
+      emotion: String(j.emotion ?? "neutral"),
+      is_answer: !!j.is_answer,
+      value: String(j.value ?? ""),
+    };
   } catch {
-    return { answered: false, value: "" };
+    return { intent: "other", emotion: "neutral", is_answer: false, value: "" };
   }
+}
+
+// MAOS-grounded behavior directives per routed mode. Appended to the CONTEXT block.
+// (qualify / greeting / casual / offtopic are handled by the base system prompt — no directive.)
+const MODE_DIRECTIVES: Record<string, string> = {
+  empathy:
+    "SITUATION: the client just shared something emotionally heavy (grief, illness, hospital, job loss, divorce). " +
+    "Respond as a caring human, NOT a salesperson. Acknowledge their situation genuinely and briefly. Do NOT ask ANY " +
+    "qualifying or screening question. Do NOT pitch, sell, or mention loans, applications, or property use. Give them " +
+    "space and let them lead — you may gently offer to pick things back up whenever they're ready. All 3 suggestions short, warm, human.",
+  not_now:
+    "SITUATION: based on the answers, the client is not in a position to be approved right now. Do NOT say 'declined', " +
+    "'rejected', 'denied', or name the specific reason/timeframe. Shift from seller to EDUCATOR: frame it gently as a " +
+    "timing issue ('not quite there yet' / 'not yet'), stay warm, and invite them to reach back out when the time is right.",
+  post_handoff:
+    "SITUATION: you have ALREADY told the client a loan officer will reach out. Do NOT repeat that or re-pitch anything. " +
+    "Reply briefly like a real person — acknowledge what they said, reassure if needed, and stop selling. If they're chasing " +
+    "an update, offer to nudge the loan officer. Keep the 3 suggestions short and genuinely different.",
+  objection:
+    "SITUATION: the client is losing interest or pushing back. Do NOT keep qualifying. Respect it, acknowledge it, and " +
+    "either softly ask what changed or leave the door open gracefully with a low-pressure next step. Never argue or hard-sell. No screening questions.",
+  logistics:
+    "SITUATION: the client is busy or wants to connect later. Accommodate warmly and honor their timing. Do NOT push a " +
+    "qualifying question or force a call. Confirm you'll follow up when it works for them.",
+  other_lender:
+    "SITUATION: the client mentions another lender. Do NOT criticize the competitor. Offer a no-pressure 'clean second look / " +
+    "compare apples to apples', and be gracious if they decline. No screening questions.",
+  rate_shopping:
+    "SITUATION: the client is asking about rates. Do NOT quote any specific rate, APR, or number. Acknowledge, then find out " +
+    "if it's a purchase or refinance and what matters most (lower payment vs lower cash to close), pointing toward real numbers as the next step.",
+  loan_question:
+    "SITUATION: the client asked a mortgage question. Answer it briefly and accurately, then reframe to what really matters, " +
+    "then offer an easy next step. Do NOT quote specific rates or APRs. Warm, clear advisor tone — not a sales pitch.",
+  stop:
+    "SITUATION: the client asked to stop or opt out. Produce 3 short, clean acknowledgements that fully respect it with ZERO " +
+    "pushback — no questions, no pitch, no re-engagement. E.g. 'Understood — thanks for letting me know.'",
+  escalation:
+    "SITUATION: the client raised a legal, compliance, or complaint issue (attorney, CFPB, lawsuit). Do NOT sell or qualify. " +
+    "Respond calmly and professionally, take it seriously, and let them know the right person will follow up. Keep it brief.",
+  inappropriate:
+    "SITUATION: the client's message is inappropriate. Redirect cleanly and professionally back to how you can help with their " +
+    "mortgage. Do NOT engage the content, do NOT be preachy, awkward, or use euphemisms. Brief and unbothered.",
+};
+
+function routeMode(intent: string, emotion: string): string {
+  if (intent === "stop") return "stop";
+  if (intent === "escalation") return "escalation";
+  if (intent === "life_event" || emotion === "distressed") return "empathy";
+  if (intent === "not_interested") return "objection";
+  if (intent === "busy") return "logistics";
+  if (intent === "other_lender") return "other_lender";
+  if (intent === "rate_shopping") return "rate_shopping";
+  if (intent === "loan_question") return "loan_question";
+  if (intent === "inappropriate") return "inappropriate";
+  return "qualify"; // answer / greeting / casual / offtopic / other -> base system prompt
 }
 
 function normalize(key: string, value: string) {
@@ -137,31 +212,46 @@ function answersSummary(answers: Record<string, string>) {
   return parts.length ? parts.join(", ") : "N/A";
 }
 
+function stageOf(answers: Record<string, string>, confirmed: boolean) {
+  if (firstUnanswered(answers)) return "qualifying";
+  if (!confirmed) return "confirming";
+  return oracleReason(answers) ? "ineligible" : "eligible";
+}
+
 async function turn(body: any) {
   const state = { answers: {}, stage: "qualifying", confirmed: false, ...(body.state ?? {}) };
   const answers: Record<string, string> = { ...state.answers };
-  let stage: string = state.stage;
   let confirmed: boolean = state.confirmed;
   const msg: string = (body.clientMessage ?? "").trim();
   const isFirst = !!body.isFirst;
 
-  if (msg && !isFirst) {
-    if (stage === "qualifying") {
-      const key = firstUnanswered(answers);
-      if (key) {
-        const c = await classify(key, msg);
-        if (c.answered) answers[key] = normalize(key, c.value);
-      }
-    } else if (stage === "confirming") {
-      const c = await classify("confirm", msg);
-      if (c.answered && /\b(yes|correct|right|yep|yeah|looks good|good)\b/i.test(c.value)) confirmed = true;
-    }
+  // state BEFORE this turn (drives answer-detection + post-handoff routing)
+  const preKey = firstUnanswered(answers);
+  const preStage = stageOf(answers, confirmed);
+  const currentQuestion =
+    preStage === "qualifying" ? preKey ?? "" : preStage === "confirming" ? "confirm: does the recap look right?" : "";
+
+  // one classifier call: intent + emotion + (if answering) the value
+  const sit: Situation = msg
+    ? await classify(msg, currentQuestion)
+    : { intent: isFirst ? "greeting" : "other", emotion: "neutral", is_answer: false, value: "" };
+
+  let mode = isFirst && sit.intent === "greeting" ? "qualify" : routeMode(sit.intent, sit.emotion);
+
+  // advance the screening ONLY when we're actually qualifying and they answered
+  if (mode === "qualify" && msg && !isFirst && sit.is_answer) {
+    if (preStage === "qualifying" && preKey) answers[preKey] = normalize(preKey, sit.value);
+    else if (preStage === "confirming" && /\b(yes|correct|right|yep|yeah|good)\b/i.test(sit.value)) confirmed = true;
   }
 
   const nextKey = firstUnanswered(answers);
-  if (nextKey) stage = "qualifying";
-  else if (!confirmed) stage = "confirming";
-  else stage = oracleReason(answers) ? "ineligible" : "eligible";
+  const stage = stageOf(answers, confirmed);
+
+  // MAOS overrides on the qualify path: don't-sell states take precedence
+  if (mode === "qualify") {
+    if (preStage === "eligible") mode = "post_handoff";
+    else if (stage === "ineligible") mode = "not_now";
+  }
 
   const ctx: Record<string, string> = {
     stage,
@@ -174,9 +264,10 @@ async function turn(body: any) {
     isFirst: isFirst ? "yes" : "no",
   };
 
-  const gen = await generate(ctx);
+  const gen = await generate(ctx, undefined, undefined, MODE_DIRECTIVES[mode] ?? "");
   return {
     recommendations: gen.recommendations,
+    situation: { intent: sit.intent, emotion: sit.emotion, mode },
     context: ctx,
     contextBlock: gen.contextBlock,
     state: { answers, stage, confirmed },

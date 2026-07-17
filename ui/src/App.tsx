@@ -47,6 +47,7 @@ export default function App() {
   const [turns, setTurns] = useState<TurnLog[]>([]);
   const [lastCtx, setLastCtx] = useState<Record<string, string> | null>(null);
   const [ctxBlock, setCtxBlock] = useState<string>("");
+  const [situation, setSituation] = useState<{ intent: string; emotion: string; mode: string } | null>(null);
   const [showCtx, setShowCtx] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const [revise, setRevise] = useState("");
@@ -75,6 +76,7 @@ export default function App() {
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error ?? `HTTP ${res.status}`);
       setState(data.state);
+      setSituation(data.situation ?? null);
       setLastCtx(data.context);
       setCtxBlock(data.contextBlock ?? "");
       if (assist) {
@@ -125,6 +127,7 @@ export default function App() {
     setState(INIT);
     setRecs(null);
     setTurns([]);
+    setSituation(null);
     setLastCtx(null);
     setCtxBlock("");
     setInput("");
@@ -378,6 +381,16 @@ export default function App() {
               {loading && (
                 <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
                   <Loader2 className="h-3.5 w-3.5 animate-spin" /> thinking…
+                </div>
+              )}
+
+              {situation && !loading && (
+                <div className="flex flex-wrap items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
+                  <span className="opacity-70">router:</span>
+                  <Badge variant={situation.mode === "qualify" ? "outline" : "secondary"}>{situation.mode}</Badge>
+                  <span>
+                    {situation.intent} · {situation.emotion}
+                  </span>
                 </div>
               )}
 
