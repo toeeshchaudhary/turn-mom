@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Send, RefreshCw, Sparkles, User, Headset, Loader2, MessageSquare, RotateCcw, Check, Code } from "lucide-react";
+import { Send, RefreshCw, Sparkles, User, Headset, Loader2, MessageSquare, RotateCcw, Check, Code, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
@@ -41,6 +41,7 @@ export default function App() {
   const [lastCtx, setLastCtx] = useState<Record<string, string> | null>(null);
   const [ctxBlock, setCtxBlock] = useState<string>("");
   const [showCtx, setShowCtx] = useState(false);
+  const [showExport, setShowExport] = useState(false);
   const [revise, setRevise] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -110,6 +111,50 @@ export default function App() {
     setError("");
   }
 
+  function download(filename: string, content: string, type: string) {
+    const url = URL.createObjectURL(new Blob([content], { type }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function exportChat(format: "json" | "md") {
+    setShowExport(false);
+    if (messages.length === 0) return;
+    const now = new Date();
+    const stamp = now.toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    const mode = assist ? "assist" : "chat";
+    if (format === "json") {
+      const data = {
+        app: "ChadGPT CSS assistant",
+        mode,
+        exportedAt: now.toISOString(),
+        agent: agentName,
+        client: clientName,
+        screening: assist ? { stage: state.stage, answers: state.answers } : undefined,
+        messages,
+      };
+      download(`chadgpt-${mode}-${stamp}.json`, JSON.stringify(data, null, 2), "application/json");
+    } else {
+      const lines = [
+        `# ChadGPT — ${assist ? "Assist" : "Chat"} transcript`,
+        "",
+        `- Agent: ${agentName}`,
+        `- Client: ${clientName}`,
+        `- Exported: ${now.toLocaleString()}`,
+      ];
+      if (assist) {
+        const a = Object.entries(state.answers).map(([k, v]) => `${k}=${v}`).join(", ") || "none";
+        lines.push(`- Stage: ${state.stage}`, `- Answers collected: ${a}`);
+      }
+      lines.push("", "---", "");
+      for (const m of messages) lines.push(`**${m.role === "client" ? "Client" : "Rep"}:** ${m.text}`, "");
+      download(`chadgpt-${mode}-${stamp}.md`, lines.join("\n"), "text/markdown");
+    }
+  }
+
   const outgoing = (role: Msg["role"]) => (assist ? role === "rep" : role === "client");
   const nextKey = KEYS.find(([k]) => !(k in state.answers))?.[0] ?? null;
 
@@ -130,6 +175,36 @@ export default function App() {
             <MessageSquare className={cn("h-3.5 w-3.5", !assist ? "text-foreground" : "text-muted-foreground")} />
             <Switch checked={assist} onCheckedChange={setAssist} />
             <span className={cn("text-xs font-medium", assist ? "text-foreground" : "text-muted-foreground")}>Assist</span>
+          </div>
+          <div className="relative">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={messages.length === 0}
+              onClick={() => setShowExport((v) => !v)}
+              title="Export this conversation"
+            >
+              <Download className="h-3.5 w-3.5" /> Export
+            </Button>
+            {showExport && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setShowExport(false)} />
+                <div className="absolute right-0 z-20 mt-1 w-40 overflow-hidden rounded-md border bg-popover shadow-md">
+                  <button
+                    onClick={() => exportChat("json")}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-accent"
+                  >
+                    <Code className="h-3.5 w-3.5" /> JSON (data)
+                  </button>
+                  <button
+                    onClick={() => exportChat("md")}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-accent"
+                  >
+                    <MessageSquare className="h-3.5 w-3.5" /> Markdown (readable)
+                  </button>
+                </div>
+              </>
+            )}
           </div>
           <Button
             variant={showCtx ? "secondary" : "ghost"}
