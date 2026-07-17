@@ -15,5 +15,5 @@ vllm serve "$MERGED" \
   --served-model-name naf \
   --dtype bfloat16 \
   --max-model-len 8192 \
-  --gpu-memory-utilization 0.90 \
+  --gpu-memory-utilization 0.55 \
   --port 8000
