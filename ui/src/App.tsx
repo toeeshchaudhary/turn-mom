@@ -46,7 +46,9 @@ export default function App() {
   const [error, setError] = useState("");
   const bottom = useRef<HTMLDivElement>(null);
 
-  useEffect(() => bottom.current?.scrollIntoView({ behavior: "smooth" }), [messages, recs, loading]);
+  useEffect(() => {
+    bottom.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, recs, loading]);
 
   async function run(clientMessage: string) {
     if (!clientMessage.trim() || loading) return;
