@@ -13,6 +13,12 @@ import { cn } from "@/lib/utils";
 type Rec = { suggested_message: string; confidence: "high" | "medium" | "low" };
 type Msg = { role: "client" | "rep"; text: string };
 type State = { answers: Record<string, string>; stage: string; confirmed: boolean };
+type TurnLog = {
+  clientMessage: string;
+  context: Record<string, string>;
+  suggestions: Rec[];
+  selectedIndex: number | null;
+};
 
 const INIT: State = { answers: {}, stage: "qualifying", confirmed: false };
 const KEYS: [string, string][] = [
@@ -38,6 +44,7 @@ export default function App() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [recs, setRecs] = useState<Rec[] | null>(null);
+  const [turns, setTurns] = useState<TurnLog[]>([]);
   const [lastCtx, setLastCtx] = useState<Record<string, string> | null>(null);
   const [ctxBlock, setCtxBlock] = useState<string>("");
   const [showCtx, setShowCtx] = useState(false);
@@ -70,8 +77,15 @@ export default function App() {
       setState(data.state);
       setLastCtx(data.context);
       setCtxBlock(data.contextBlock ?? "");
-      if (assist) setRecs(data.recommendations);
-      else setMessages((m) => [...m, { role: "rep", text: data.recommendations[0]?.suggested_message ?? "…" }]);
+      if (assist) {
+        setRecs(data.recommendations);
+        setTurns((t) => [
+          ...t,
+          { clientMessage, context: data.context, suggestions: data.recommendations, selectedIndex: null },
+        ]);
+      } else {
+        setMessages((m) => [...m, { role: "rep", text: data.recommendations[0]?.suggested_message ?? "…" }]);
+      }
     } catch (e: any) {
       setError(String(e.message ?? e));
     } finally {
@@ -93,6 +107,11 @@ export default function App() {
       if (!res.ok || data.error) throw new Error(data.error ?? `HTTP ${res.status}`);
       setRecs(data.recommendations);
       setCtxBlock(data.contextBlock ?? ctxBlock);
+      setTurns((t) =>
+        t.map((x, i) =>
+          i === t.length - 1 ? { ...x, suggestions: data.recommendations, selectedIndex: null } : x
+        )
+      );
       setRevise("");
     } catch (e: any) {
       setError(String(e.message ?? e));
@@ -105,6 +124,7 @@ export default function App() {
     setMessages([]);
     setState(INIT);
     setRecs(null);
+    setTurns([]);
     setLastCtx(null);
     setCtxBlock("");
     setInput("");
@@ -135,6 +155,16 @@ export default function App() {
         client: clientName,
         screening: assist ? { stage: state.stage, answers: state.answers } : undefined,
         messages,
+        turns: assist
+          ? turns.map((t) => ({
+              clientMessage: t.clientMessage,
+              context: t.context,
+              suggestions: t.suggestions.map((s, i) => ({ ...s, selected: i === t.selectedIndex })),
+              selectedIndex: t.selectedIndex,
+              selectedMessage:
+                t.selectedIndex != null ? t.suggestions[t.selectedIndex]?.suggested_message ?? null : null,
+            }))
+          : undefined,
       };
       download(`chadgpt-${mode}-${stamp}.json`, JSON.stringify(data, null, 2), "application/json");
     } else {
@@ -150,9 +180,25 @@ export default function App() {
         lines.push(`- Stage: ${state.stage}`, `- Answers collected: ${a}`);
       }
       lines.push("", "---", "");
-      for (const m of messages) lines.push(`**${m.role === "client" ? "Client" : "Rep"}:** ${m.text}`, "");
+      if (assist) {
+        for (const t of turns) {
+          lines.push(`**Client:** ${t.clientMessage}`, "", `_Suggestions:_`);
+          t.suggestions.forEach((s, i) =>
+            lines.push(`- ${i === t.selectedIndex ? "**[SELECTED]** " : ""}(${s.confidence}) ${s.suggested_message}`)
+          );
+          lines.push("");
+        }
+      } else {
+        for (const m of messages) lines.push(`**${m.role === "client" ? "Client" : "Rep"}:** ${m.text}`, "");
+      }
       download(`chadgpt-${mode}-${stamp}.md`, lines.join("\n"), "text/markdown");
     }
+  }
+
+  function pick(r: Rec, index: number) {
+    setMessages((m) => [...m, { role: "rep", text: r.suggested_message }]);
+    setTurns((t) => t.map((x, i) => (i === t.length - 1 ? { ...x, selectedIndex: index } : x)));
+    setRecs(null);
   }
 
   const outgoing = (role: Msg["role"]) => (assist ? role === "rep" : role === "client");
@@ -341,10 +387,7 @@ export default function App() {
                   {recs.map((r, i) => (
                     <button
                       key={i}
-                      onClick={() => {
-                        setMessages((m) => [...m, { role: "rep", text: r.suggested_message }]);
-                        setRecs(null);
-                      }}
+                      onClick={() => pick(r, i)}
                       className="group flex w-full items-start justify-between gap-3 rounded-lg border bg-card p-3 text-left transition-colors hover:border-foreground/30 hover:bg-accent"
                     >
                       <p className="text-sm leading-relaxed">{r.suggested_message}</p>
