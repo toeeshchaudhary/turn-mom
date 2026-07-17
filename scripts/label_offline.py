@@ -11,17 +11,26 @@ Usage (on the box — this OWNS the GPU while it runs; no separate teacher serve
 """
 import argparse, json, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from label_with_teacher import (SYS_PROMPT, stream_a_user, stream_b_user, parse_json)
-MAX_HISTORY_TURNS = 30   
+from label_with_teacher import (SYS_PROMPT, stream_a_user, stream_b_user, stream_maos_user, parse_json)
+MAX_HISTORY_TURNS = 30
 def build_messages(task):
-    if task.get("kind") != "scenario":
+    kind = task.get("kind")
+    if kind == "maos":
+        user = stream_maos_user(task)
+    elif kind == "scenario":
+        user = stream_b_user(task["context"])
+    else:
         h = task.get("history", [])
-        if len(h) > MAX_HISTORY_TURNS:      
+        if len(h) > MAX_HISTORY_TURNS:
             task = {**task, "history": h[-MAX_HISTORY_TURNS:]}
-    user = stream_b_user(task["context"]) if task.get("kind") == "scenario" else stream_a_user(task)
+        user = stream_a_user(task)
     return [{"role": "system", "content": SYS_PROMPT}, {"role": "user", "content": user}]
 def postprocess(task, text):
-    if task.get("kind") == "scenario":
+    kind = task.get("kind")
+    if kind == "maos":
+        out = {"context": task["context"], "recommendations": parse_json(text)["recommendations"],
+               "directive": task["directive"], "mode": task["mode"]}
+    elif kind == "scenario":
         out = {"context": task["context"], "recommendations": parse_json(text)["recommendations"]}
     else:
         out = parse_json(text)

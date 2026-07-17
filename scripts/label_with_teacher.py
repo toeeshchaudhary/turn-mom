@@ -71,6 +71,20 @@ def stream_b_user(ctx):
         'Return ONLY JSON: {"recommendations": [{"suggested_message": str, '
         '"confidence": "high|medium|low"}, x3]}'
     )
+def stream_maos_user(task):
+    parts = [render_ctx_block(task["context"]), "", task["directive"]]
+    if task.get("anchor"):
+        parts.append(
+            '\nAn experienced NAF rep would reply something like: "' + task["anchor"] + '". '
+            "Make exactly ONE of your 3 suggestions a natural text-message version of that "
+            "(keep the meaning, text register). The other two are genuine alternatives that "
+            "follow the SITUATION above.")
+    parts.append("\nProduce exactly 3 suggested messages that follow the SITUATION directive above "
+                 "(it overrides the normal stage behavior).")
+    parts.append(f"{NO_TOKENS}\n{NO_BACKCHANNEL}")
+    parts.append('Return ONLY JSON: {"recommendations": [{"suggested_message": str, '
+                 '"confidence": "high|medium|low"}, x3]}')
+    return "\n".join(parts)
 def parse_json(text):
     text = text.strip()
     text = re.sub(r"^```(?:json)?|```$", "", text, flags=re.M).strip()
@@ -79,6 +93,14 @@ def parse_json(text):
         raise ValueError("no json object in teacher output")
     return json.loads(text[s:e + 1])
 def dry_label(task):
+    if task.get("kind") == "maos":
+        anchor = task.get("anchor") or "whenever you're ready, I'm here to help"
+        recs = [{"suggested_message": anchor[:160], "confidence": "medium"},
+                {"suggested_message": "no rush at all on my end", "confidence": "low"},
+                {"suggested_message": "just let me know how you'd like to go", "confidence": "low"}]
+        out = {"context": task["context"], "recommendations": recs,
+               "directive": task["directive"], "mode": task["mode"]}
+        return out
     if task.get("kind") == "scenario":
         ctx = task["context"]
         base = ctx["Client's latest message"]
@@ -101,7 +123,12 @@ def label(task, dry):
         out = dry_label(task)
     else:
         from teacher_client import chat
-        if task.get("kind") == "scenario":
+        if task.get("kind") == "maos":
+            content = chat([{"role": "system", "content": SYS_PROMPT},
+                            {"role": "user", "content": stream_maos_user(task)}])
+            out = {"context": task["context"], "recommendations": parse_json(content)["recommendations"],
+                   "directive": task["directive"], "mode": task["mode"]}
+        elif task.get("kind") == "scenario":
             content = chat([{"role": "system", "content": SYS_PROMPT},
                             {"role": "user", "content": stream_b_user(task["context"])}])
             parsed = parse_json(content)

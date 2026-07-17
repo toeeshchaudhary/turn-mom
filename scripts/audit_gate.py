@@ -17,6 +17,12 @@ RATE_RE = re.compile(r"\b\d+(\.\d+)?\s?%|\bAPR\b|\$\s?\d", re.I)
 TOKEN_RE = re.compile(r"\{[A-Z][A-Z_]*\}")   
 FORBIDDEN_INELIGIBLE = re.compile(r"\b(failed|rejected|denied|disqualified)\b", re.I)
 GREETING_RE = re.compile(r"^\s*(hey|hi|hello)\b", re.I)
+# screening/pitch language that must NOT appear when we're in a don't-sell mode
+SCREEN_RE = re.compile(
+    r"\b(property|bankruptc|foreclosur|late (mortgage )?payment|pre-?approv|"
+    r"application|apply|primary residence|investment property|how do you plan (on |to )?us)",
+    re.I,
+)
 ACK_OPENER_RE = re.compile(
     r"^\s*(?:hey\s+\w+[,!]?\s+)?"
     r"(got it|alright|okay so|ok so|great|sounds good|perfect|glad to hear|awesome|"
@@ -63,6 +69,21 @@ def check(rec):
         for m in msgs:
             if "new american funding" not in m.lower():
                 return "greeting message missing 'New American Funding'"
+
+    # MAOS mode-specific guardrails (Stream C)
+    mode = rec.get("mode")
+    if mode == "empathy":
+        for m in msgs:
+            if SCREEN_RE.search(m):
+                return "empathy reply still qualifies/pitches (must not sell)"
+    elif mode == "stop":
+        for m in msgs:
+            if "?" in m or len(m) > 140:
+                return "stop reply is not a clean, question-free acknowledgement"
+    elif mode in ("logistics", "objection", "other_lender"):
+        for m in msgs:
+            if SCREEN_RE.search(m):
+                return f"{mode} reply pushes a screening question (should not)"
     return None
 def main():
     ap = argparse.ArgumentParser()

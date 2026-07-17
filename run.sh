@@ -28,7 +28,8 @@ if [ ! -s "$D/all_tasks.jsonl" ]; then
   echo "== 7. build tasks =="
   python3 scripts/build_label_tasks.py "$D/hydrated.jsonl" --out "$D/tasks.jsonl" --max-per-convo "$MAXPC"
   python3 scripts/gen_scenarios.py --out "$D/scenarios.jsonl" --n "$NSCEN"
-  cat "$D/tasks.jsonl" "$D/scenarios.jsonl" > "$D/all_tasks.jsonl"
+  python3 scripts/gen_maos_scenarios.py --out "$D/maos.jsonl" --per "${MAOS_PER:-80}"
+  cat "$D/tasks.jsonl" "$D/scenarios.jsonl" "$D/maos.jsonl" > "$D/all_tasks.jsonl"
 else echo "== 7. build tasks  (skip, exists) =="; fi
 echo "  all_tasks=$(wc -l < "$D/all_tasks.jsonl")"
 echo "== 8. label (offline, $TEACHER) =="

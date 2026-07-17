@@ -41,9 +41,12 @@ def main():
             if not line:
                 continue
             rec = json.loads(line)
+            user = ctx_block(rec["context"])
+            if rec.get("directive"):   # MAOS mode example: append the same directive the orchestrator sends
+                user = user + "\n\n" + rec["directive"]
             rows.append({"messages": [
                 {"role": "system", "content": SYS_PROMPT},
-                {"role": "user", "content": ctx_block(rec["context"])},
+                {"role": "user", "content": user},
                 {"role": "assistant", "content": assistant_json(rec["recommendations"])},
             ]})
     random.Random(args.seed).shuffle(rows)
