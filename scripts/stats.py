@@ -1,6 +1,4 @@
-#!/usr/bin/env python3
 """Print training + dataset stats for the ChadGPT run. No deps beyond stdlib.
-
 Reads whatever artifacts exist and degrades gracefully if some are missing:
   out/mistral_naf_lora/adapter_config.json         (LoRA config)
   out/mistral_naf_lora/adapter_model.safetensors   (adapter param count, from header)
@@ -8,15 +6,11 @@ Reads whatever artifacts exist and degrades gracefully if some are missing:
   data/interim/all_tasks.jsonl, labeled.jsonl, labeled.ok.jsonl, rejects.jsonl
   data/sft/train.jsonl, val.jsonl, train_small.jsonl
   data/interim/bonzo_clean.jsonl, calls_clean.jsonl
-
 Usage:  python3 scripts/stats.py            (run from repo root)
         python3 scripts/stats.py --root .   (or point at another checkout)
 """
 import argparse, glob, json, os, struct
-
 SPARK = "▁▂▃▄▅▆▇█"
-
-
 def wc(path):
     if not os.path.exists(path):
         return None
@@ -25,12 +19,8 @@ def wc(path):
         for _ in f:
             n += 1
     return n
-
-
 def fmt(n):
     return f"{n:,}" if isinstance(n, int) else str(n)
-
-
 def sparkline(vals, width=60):
     if not vals:
         return ""
@@ -40,10 +30,7 @@ def sparkline(vals, width=60):
     lo, hi = min(vals), max(vals)
     rng = (hi - lo) or 1.0
     return "".join(SPARK[min(7, int((v - lo) / rng * 7))] for v in vals)
-
-
 def safetensors_params(path):
-    """Sum tensor element counts from the safetensors JSON header (no torch)."""
     try:
         with open(path, "rb") as f:
             (hlen,) = struct.unpack("<Q", f.read(8))
@@ -60,8 +47,6 @@ def safetensors_params(path):
         return total
     except Exception:
         return None
-
-
 def latest_trainer_state(root):
     cands = glob.glob(os.path.join(root, "out/mistral_naf_lora/checkpoint-*/trainer_state.json"))
     cands += [os.path.join(root, "out/mistral_naf_lora/trainer_state.json")]
@@ -70,23 +55,16 @@ def latest_trainer_state(root):
         return None
     cands.sort(key=lambda p: int(p.split("checkpoint-")[1].split("/")[0]) if "checkpoint-" in p else 0)
     return json.load(open(cands[-1]))
-
-
 def line(label, value):
     print(f"  {label:<20}: {value}")
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default=".")
     args = ap.parse_args()
     R = args.root
-
     print("═" * 60)
     print("  ChadGPT — Training & Dataset Stats")
     print("═" * 60)
-
-    # ---- model / adapter ----
     print("\nMODEL")
     cfg_p = os.path.join(R, "out/mistral_naf_lora/adapter_config.json")
     if os.path.exists(cfg_p):
@@ -101,8 +79,6 @@ def main():
     ad = safetensors_params(os.path.join(R, "out/mistral_naf_lora/adapter_model.safetensors"))
     if ad:
         line("adapter params", f"{ad/1e6:.1f}M trainable (LoRA)")
-
-    # ---- training ----
     print("\nTRAINING")
     st = latest_trainer_state(R)
     if st:
@@ -131,8 +107,6 @@ def main():
             print(f"    {losses[0][1]:.2f}{'':<52}{losses[-1][1]:.2f}")
     else:
         line("trainer_state", "not found (no checkpoint yet)")
-
-    # ---- dataset funnel ----
     print("\nDATASET  (pipeline funnel)")
     counts = [
         ("bonzo convos", "data/interim/bonzo_clean.jsonl"),
@@ -153,9 +127,6 @@ def main():
         if label == "audit passed" and labeled and passed:
             extra = f"   ({passed/labeled*100:.0f}% pass rate)"
         line(label, (fmt(n) + extra) if n is not None else "—")
-
     print("\n" + "═" * 60)
-
-
 if __name__ == "__main__":
     main()

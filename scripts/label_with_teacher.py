@@ -1,6 +1,4 @@
-#!/usr/bin/env python3
 """Label tasks with the teacher LLM -> RecommendationResponse training examples.
-
 Handles both streams:
   Stream A (real convos): task has {history, gold_reply}. The teacher infers the
     CONTEXT block from history AND returns 3 suggestions, one of which is a lightly
@@ -8,49 +6,36 @@ Handles both streams:
     also rewrites noisy ASR transcript replies into clean SMS text).
   Stream B (scenarios): task has {context}. The teacher writes 3 suggestions for
     the given, deterministic CONTEXT block.
-
 Output record (one per task):
   {context:{...six fields...}, recommendations:[{suggested_message, confidence}x3],
    meta:{source, file, kind, case}}
-
 Use --dry-run to fabricate deterministic stub labels (no teacher needed) so you
 can smoke-test the plumbing locally before spinning up the GPU teacher.
-
 Usage:
   TEACHER_BASE_URL=http://localhost:8001/v1 TEACHER_MODEL=teacher \
     python3 label_with_teacher.py tasks.jsonl --out labeled.jsonl
   python3 label_with_teacher.py tasks.jsonl --out labeled.jsonl --dry-run   # local test
 """
 import argparse, json, os, re, sys
-
 SYS_PROMPT = open(os.path.join(os.path.dirname(__file__), "..", "prompts",
                                 "css_system_prompt.txt"), encoding="utf-8").read()
-
 CTX_FIELDS = ["Stage", "Next question key", "Answers collected", "Ineligibility reason",
               "Agent name", "Client name", "Client's latest message", "Is first message"]
-
-
 def render_history(history):
     lines = []
     for t in history:
         who = "CLIENT" if t["role"] == "client" else "REP"
         lines.append(f"{who}: {t['text']}")
     return "\n".join(lines)
-
-
 def render_ctx_block(ctx):
     lines = ["--- CURRENT CONTEXT ---"]
     for k in CTX_FIELDS:
         lines.append(f"{k}: {ctx.get(k, 'N/A')}")
     lines.append("---")
     return "\n".join(lines)
-
-
 NO_TOKENS = ("NEVER output redaction placeholders like {NAME}, {NAME_GIVEN}, or "
              "{PHONE_NUMBER}. Use the real Agent name / Client name given below, or "
              "a natural first name — never a bracketed token.")
-
-
 def stream_a_user(task):
     return (
         f"Agent name: {task.get('agent_name','Alex')}\n"
@@ -70,8 +55,6 @@ def stream_a_user(task):
         'Return ONLY JSON: {"context": {<the eight fields>}, "recommendations": '
         '[{"suggested_message": str, "confidence": "high|medium|low"}, x3]}'
     )
-
-
 def stream_b_user(ctx):
     return (
         render_ctx_block(ctx) + "\n\n"
@@ -81,20 +64,14 @@ def stream_b_user(ctx):
         'Return ONLY JSON: {"recommendations": [{"suggested_message": str, '
         '"confidence": "high|medium|low"}, x3]}'
     )
-
-
 def parse_json(text):
     text = text.strip()
     text = re.sub(r"^```(?:json)?|```$", "", text, flags=re.M).strip()
-    # grab the outermost {...}
     s, e = text.find("{"), text.rfind("}")
     if s == -1 or e == -1:
         raise ValueError("no json object in teacher output")
     return json.loads(text[s:e + 1])
-
-
 def dry_label(task):
-    """Deterministic stub so the pipeline is testable with no teacher."""
     if task.get("kind") == "scenario":
         ctx = task["context"]
         base = ctx["Client's latest message"]
@@ -112,8 +89,6 @@ def dry_label(task):
         {"suggested_message": "happy to keep this moving whenever you are", "confidence": "low"},
     ]
     return {"context": ctx, "recommendations": recs}
-
-
 def label(task, dry):
     if dry:
         out = dry_label(task)
@@ -128,7 +103,6 @@ def label(task, dry):
             content = chat([{"role": "system", "content": SYS_PROMPT},
                             {"role": "user", "content": stream_a_user(task)}])
             out = parse_json(content)
-            # trust the known names over anything the teacher inferred
             out.setdefault("context", {})
             out["context"]["Agent name"] = task.get("agent_name", "Alex")
             out["context"]["Client name"] = task.get("client_name", "there")
@@ -139,8 +113,6 @@ def label(task, dry):
         "case": task.get("case"),
     }
     return out
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("tasks")
@@ -151,7 +123,6 @@ def main():
                     help="concurrent teacher requests (vLLM batches these)")
     args = ap.parse_args()
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
     tasks = []
     with open(args.tasks, encoding="utf-8") as f:
         for line in f:
@@ -160,12 +131,10 @@ def main():
                 tasks.append(json.loads(line))
             if args.limit and len(tasks) >= args.limit:
                 break
-
     from concurrent.futures import ThreadPoolExecutor, as_completed
     n = fail = done = 0
     total = len(tasks)
-    with open(args.out, "w", encoding="utf-8") as out, \
-         ThreadPoolExecutor(max_workers=args.workers) as pool:
+    with open(args.out, "w", encoding="utf-8") as out,         ThreadPoolExecutor(max_workers=args.workers) as pool:
         futs = {pool.submit(label, t, args.dry_run): i for i, t in enumerate(tasks)}
         for fut in as_completed(futs):
             done += 1
@@ -179,7 +148,5 @@ def main():
             if done % 200 == 0:
                 print(f"[label] {done}/{total} ({n} ok, {fail} fail)", file=sys.stderr)
     print(f"[label] wrote {n} labeled, {fail} failed -> {args.out}", file=sys.stderr)
-
-
 if __name__ == "__main__":
     main()

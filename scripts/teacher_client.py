@@ -1,16 +1,11 @@
-#!/usr/bin/env python3
 """Thin OpenAI-compatible chat client for the local teacher (vLLM on the GH200).
-
 No external deps — uses urllib so it runs anywhere. Points at TEACHER_BASE_URL
 (default http://localhost:8001/v1) serving e.g. Llama-3.3-70B / Qwen2.5-72B.
 """
 import json, os, time, urllib.request, urllib.error
-
 BASE = os.environ.get("TEACHER_BASE_URL", "http://localhost:8001/v1")
 MODEL = os.environ.get("TEACHER_MODEL", "teacher")
 KEY = os.environ.get("TEACHER_API_KEY", "dummy")
-
-
 def chat(messages, temperature=0.7, max_tokens=700, json_mode=True, retries=4):
     body = {
         "model": MODEL,

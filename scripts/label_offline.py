@@ -1,35 +1,25 @@
-#!/usr/bin/env python3
 """Offline BATCHED teacher labeling with vLLM (no HTTP server, no --workers).
-
 This replaces the serve_teacher.sh + label_with_teacher.py (HTTP) path for bulk
 runs. It loads the teacher once and hands vLLM ALL prompts at once via llm.chat(),
 so vLLM does optimal continuous batching with CUDA graphs — far faster than firing
 concurrent HTTP requests at a served model (which stalled on JIT + scheduling on
 the GH200). Same prompts, same output format; reuses the builders from
 label_with_teacher.py.
-
 Usage (on the box — this OWNS the GPU while it runs; no separate teacher server):
   python3 scripts/label_offline.py data/interim/all_tasks.jsonl \
       --out data/interim/labeled.jsonl --model Qwen/Qwen2.5-14B-Instruct
 """
 import argparse, json, os, sys
-
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from label_with_teacher import (SYS_PROMPT, stream_a_user, stream_b_user, parse_json)
-
-
-MAX_HISTORY_TURNS = 30   # cap Stream-A history so no prompt overflows the context
-
-
+MAX_HISTORY_TURNS = 30   
 def build_messages(task):
     if task.get("kind") != "scenario":
         h = task.get("history", [])
-        if len(h) > MAX_HISTORY_TURNS:      # keep the most recent turns
+        if len(h) > MAX_HISTORY_TURNS:      
             task = {**task, "history": h[-MAX_HISTORY_TURNS:]}
     user = stream_b_user(task["context"]) if task.get("kind") == "scenario" else stream_a_user(task)
     return [{"role": "system", "content": SYS_PROMPT}, {"role": "user", "content": user}]
-
-
 def postprocess(task, text):
     if task.get("kind") == "scenario":
         out = {"context": task["context"], "recommendations": parse_json(text)["recommendations"]}
@@ -41,8 +31,6 @@ def postprocess(task, text):
     out["meta"] = {"source": task.get("source", "scenario"), "file": task.get("file"),
                    "kind": task.get("kind", "convo"), "case": task.get("case")}
     return out
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("tasks")
@@ -54,7 +42,6 @@ def main():
     ap.add_argument("--gpu-mem", type=float, default=0.92)
     ap.add_argument("--limit", type=int, default=0)
     args = ap.parse_args()
-
     tasks = []
     with open(args.tasks, encoding="utf-8") as f:
         for line in f:
@@ -64,20 +51,14 @@ def main():
             if args.limit and len(tasks) >= args.limit:
                 break
     print(f"[label_offline] {len(tasks)} tasks; loading {args.model} ...", file=sys.stderr)
-
     from vllm import LLM, SamplingParams
     llm = LLM(model=args.model, dtype="bfloat16", max_model_len=args.maxlen,
               gpu_memory_utilization=args.gpu_mem, trust_remote_code=True)
     sp = SamplingParams(temperature=args.temperature, max_tokens=args.max_tokens)
-
     convs = [build_messages(t) for t in tasks]
-
-    # Drop prompts that don't fit the context window — a single over-length prompt
-    # crashes the whole vLLM batch, so filter by ACTUAL token count. System prompt
-    # is fixed, so tokenize it once and only measure the (short) user part per task.
     tok = llm.get_tokenizer()
     sys_len = len(tok(SYS_PROMPT).input_ids)
-    budget = args.maxlen - args.max_tokens - 256   # leave room for output + template
+    budget = args.maxlen - args.max_tokens - 256   
     keep_tasks, keep_convs, dropped = [], [], 0
     for t, c in zip(tasks, convs):
         if sys_len + len(tok(c[1]["content"]).input_ids) <= budget:
@@ -87,9 +68,7 @@ def main():
             dropped += 1
     print(f"[label_offline] dropped {dropped} over-length prompts; "
           f"labeling {len(keep_tasks)}", file=sys.stderr)
-
-    outs = llm.chat(keep_convs, sp)   # vLLM batches all of these internally
-
+    outs = llm.chat(keep_convs, sp)   
     n = fail = 0
     with open(args.out, "w", encoding="utf-8") as out:
         for task, o in zip(keep_tasks, outs):
@@ -101,7 +80,5 @@ def main():
                 if fail <= 10:
                     print(f"[parse-fail] {e}", file=sys.stderr)
     print(f"[label_offline] wrote {n} labeled, {fail} parse-fails -> {args.out}", file=sys.stderr)
-
-
 if __name__ == "__main__":
     main()
