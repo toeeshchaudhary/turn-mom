@@ -17,6 +17,12 @@ RATE_RE = re.compile(r"\b\d+(\.\d+)?\s?%|\bAPR\b|\$\s?\d", re.I)
 TOKEN_RE = re.compile(r"\{[A-Z][A-Z_]*\}")   
 FORBIDDEN_INELIGIBLE = re.compile(r"\b(failed|rejected|denied|disqualified)\b", re.I)
 GREETING_RE = re.compile(r"^\s*(hey|hi|hello)\b", re.I)
+ACK_OPENER_RE = re.compile(
+    r"^\s*(?:hey\s+\w+[,!]?\s+)?"
+    r"(got it|alright|okay so|ok so|great|sounds good|perfect|glad to hear|awesome|"
+    r"i understand|gotcha|no worries|absolutely|of course|makes sense|good to (know|hear))\b",
+    re.I,
+)
 def sentences(s):
     return [x for x in re.split(r"(?<=[.!?])\s+", s.strip()) if x]
 def check(rec):
@@ -43,6 +49,8 @@ def check(rec):
     firsts = {m.split()[0].lower().strip(".,!?") for m in msgs if m.split()}
     if len(firsts) == 1:
         return "all 3 start with the same word"
+    if sum(1 for m in msgs if ACK_OPENER_RE.match(m)) >= 2:
+        return "2+ suggestions open with call-style acknowledgement filler"
     ctx = rec.get("context", {})
     stage = (ctx.get("Stage") or "").lower()
     if stage == "ineligible":

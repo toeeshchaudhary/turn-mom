@@ -36,6 +36,13 @@ def render_ctx_block(ctx):
 NO_TOKENS = ("NEVER output redaction placeholders like {NAME}, {NAME_GIVEN}, or "
              "{PHONE_NUMBER}. Use the real Agent name / Client name given below, or "
              "a natural first name — never a bracketed token.")
+NO_BACKCHANNEL = (
+    "This is a TEXT message, not a phone call. Do NOT open messages with call-style "
+    "acknowledgement fillers ('Got it', 'Alright', 'Okay so', 'Great', 'Sounds good', "
+    "'Perfect', 'Glad to hear', 'Awesome', 'I understand', 'Gotcha'). At MOST one of the "
+    "three suggestions may briefly acknowledge in passing; the other two must get straight "
+    "to the point with no filler. Vary the openers — they must not all start the same way, "
+    "and none should read like a rep verbally nodding along on a call.")
 def stream_a_user(task):
     return (
         f"Agent name: {task.get('agent_name','Alex')}\n"
@@ -51,7 +58,7 @@ def stream_a_user(task):
         "text-message version of what the rep actually sent — keep their meaning "
         "and voice, fix typos/ASR errors, strip any phone-call phrasing. The other "
         "two must be genuine, meaningfully different alternatives.\n"
-        f"{NO_TOKENS}\n"
+        f"{NO_TOKENS}\n{NO_BACKCHANNEL}\n"
         'Return ONLY JSON: {"context": {<the eight fields>}, "recommendations": '
         '[{"suggested_message": str, "confidence": "high|medium|low"}, x3]}'
     )
@@ -60,7 +67,7 @@ def stream_b_user(ctx):
         render_ctx_block(ctx) + "\n\n"
         "TASK: produce exactly 3 suggested messages following ALL your voice and "
         "stage rules for this context.\n"
-        f"{NO_TOKENS}\n"
+        f"{NO_TOKENS}\n{NO_BACKCHANNEL}\n"
         'Return ONLY JSON: {"recommendations": [{"suggested_message": str, '
         '"confidence": "high|medium|low"}, x3]}'
     )
