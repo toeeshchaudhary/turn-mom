@@ -2,13 +2,13 @@
 
 Clone → build the MAOS-first dataset → full-SFT DiffusionGemma-26B → export → inference.
 
-## ⚠️ Hardware requirement (read first)
-Full SFT of **`google/diffusiongemma-26B-A4B-it`** (26B MoE) uses **expert parallelism `ep_size: 8`
-→ an 8-GPU node.** A single GH200 (~98 GB) **cannot** do full SFT of a 26B model (weights +
-fp32 master + AdamW states ≈ hundreds of GB even sharded). Options:
-- **8×GPU node** → use `nemo/diffusion_gemma_sft.yaml` as-is (this runbook).
-- **1 GPU** → switch to the LoRA recipe (`diffusion_gemma_lora.yaml` in the Automodel repo) and set
-  `ep_size: 1`, or fall back to our proven **Mistral-24B LoRA** path (`train/unsloth_train.py`).
+## Which config (hardware)
+Full SFT of `google/diffusiongemma-26B-A4B-it` (26B MoE) needs `ep_size: 8` → an 8-GPU node, and 26B
+full FT (fp32 master + AdamW states) can't fit fewer GPUs. **We have ONE GH200**, so:
+- **→ use `nemo/diffusion_gemma_lora_1gpu.yaml`** (LoRA, `ep_size: 1`, bf16 base). Fits ~1 GH200
+  (the prior team ran the non-diffusion Gemma-26B LoRA at ~73 GB / 94 GB — this mirrors it).
+- `nemo/diffusion_gemma_sft.yaml` (full SFT) is kept for **if you ever get an 8-GPU node.**
+- Proven fallback if DiffusionGemma is troublesome: our **Mistral-24B LoRA** (`train/unsloth_train.py`).
 
 ## 0. Install
 ```bash
@@ -40,24 +40,25 @@ BONZO_DUMP=data/raw/bonzo_new/conversations.jsonl \
 > **Redaction note:** `mine_bonzo.py` regex-redaction is high-recall, not compliance-grade — run a full
 > redaction pass (prior `redact_bonzo` / NER) before shipping a customer-facing model.
 
-## 3. Train (full SFT, 8 GPUs)
+## 3. Train — LoRA on 1 GH200
 ```bash
-# copy our config + data where the Automodel launcher can see them, then:
-torchrun --standalone --nproc-per-node=8 \
+torchrun --standalone --nproc-per-node=1 \
     Automodel/examples/dllm_sft/finetune.py \
-    -c nemo/diffusion_gemma_sft.yaml
-# checkpoints -> dllm_checkpoints/chadgpt_diffusion_gemma_sft/  (safetensors, consolidated)
+    -c nemo/diffusion_gemma_lora_1gpu.yaml
+# adapter -> dllm_checkpoints/chadgpt_diffusion_gemma_lora/
 ```
-Config notes (`nemo/diffusion_gemma_sft.yaml`): `seq_length: 2048` (our long CSS+MAOS system prompt
-needs the room), `canvas_length: 256` (response region — our JSON fits), `mask_history: true` (loss on
-the assistant turn only), `max_steps: 2000` (tune to ~2–3 passes over your set), `save_consolidated: true`
-(HF-loadable export).
+Config notes: `torch_dtype: bfloat16` (fp32 26B won't fit one GPU), `ep_size: 1`, `seq_length: 2048`
+(long system prompt), `canvas_length: 256` (response region — our JSON fits), `mask_history: true`
+(assistant-only loss), LoRA `dim 16 / alpha 32`. **If it OOMs:** shorten `seq_length` to 1536, or add
+`load_in_4bit: true` under `model:` (QLoRA), or reduce `local_batch_size`. Watch `nvidia-smi` on the
+first steps.
 
 ## 4. Export → HF model
-With `model_save_format: safetensors` + `save_consolidated: true` + `enable_hf_state_dict_adapter: true`,
-the final consolidated checkpoint in `dllm_checkpoints/.../` is loadable by `transformers>=5.11` as
-DiffusionGemma. Point inference/serving at that directory. (NeMo AutoModel export/convert specifics are
-version-dependent — confirm against the Automodel `dllm` guide for your installed version.)
+LoRA run saves the **adapter** to `dllm_checkpoints/chadgpt_diffusion_gemma_lora/`. For inference, either
+load base + adapter together, or **merge** the adapter into the base and save a consolidated
+`transformers>=5.11`-loadable DiffusionGemma directory. NeMo AutoModel's merge/export command is
+version-specific — check the `dllm` guide for your installed version (look for a `merge`/`export` util,
+or set `save_consolidated: true`). Confirm the merged dir loads before promising a serving demo.
 
 ## 5. Inference (next phase)
 DiffusionGemma is a **block-diffusion** LM (iterative denoising, not left-to-right), so serving differs

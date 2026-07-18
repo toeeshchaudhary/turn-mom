@@ -1,0 +1,132 @@
+# ChadGPT — DiffusionGemma (26B-A4B) LoRA on a SINGLE GH200.
+# Adapted from NVIDIA-NeMo/Automodel examples/dllm_sft/diffusion_gemma_lora.yaml.
+# Changes vs NVIDIA's 8-GPU LoRA config (all to fit one ~94GB GH200):
+#   * ep_size: 8 -> 1        (no expert parallelism; all experts on one GPU)
+#   * torch_dtype: float32 -> bfloat16   (fp32 26B ≈104GB won't fit; frozen LoRA base in bf16 ≈52GB)
+#   * dataset path -> our data/chat_train.jsonl ; seq_length 1024 -> 2048 (long system prompt)
+# Prior team ran the non-diffusion Gemma-4-26B LoRA in bf16 at ~73GB/94GB — this mirrors that.
+#
+# Launch (1 GPU):
+#   torchrun --standalone --nproc-per-node=1 \
+#       Automodel/examples/dllm_sft/finetune.py -c nemo/diffusion_gemma_lora_1gpu.yaml
+# If it OOMs, drop to QLoRA (load_in_4bit) or shorten seq_length; see NEMO_RUNBOOK.md.
+
+recipe: DiffusionGemmaSFTRecipe
+
+step_scheduler:
+  global_batch_size: 8
+  local_batch_size: 1
+  log_remote_every_steps: 5
+  ckpt_every_steps: 400
+  val_every_steps: 100000
+  max_steps: 2000          # tune to ~2-3 passes over your ~16-25k set
+  num_epochs: 1
+
+dist_env:
+  backend: nccl
+  timeout_minutes: 10
+
+seed: 42
+
+wandb:
+  enable: false
+  project: chadgpt-diffusiongemma-lora
+
+model:
+  _target_: nemo_automodel.NeMoAutoModelForCausalLM.from_pretrained
+  pretrained_model_name_or_path: google/diffusiongemma-26B-A4B-it
+  torch_dtype: bfloat16    # <-- fp32 base won't fit one GPU; frozen LoRA base in bf16
+  canvas_length: 256
+  self_conditioning: true
+  freeze_router: true
+  backend:
+    _target_: nemo_automodel.components.models.common.BackendConfig
+    attn: sdpa
+    linear: torch
+    rms_norm: torch_fp32
+    experts: torch_mm
+    dispatcher: torch
+    enable_hf_state_dict_adapter: true
+    enable_fsdp_optimizations: true
+
+peft:
+  _target_: nemo_automodel.components._peft.lora.PeftConfig
+  match_all_linear: false
+  target_modules:
+    - "*self_attn.q_proj"
+    - "*self_attn.k_proj"
+    - "*self_attn.v_proj"
+    - "*self_attn.o_proj"
+    - "*.mlp.gate_proj"
+    - "*.mlp.up_proj"
+    - "*.mlp.down_proj"
+  dim: 16
+  alpha: 32
+
+loss_fn:
+  _target_: nemo_automodel.components.loss.masked_ce.MaskedCrossEntropy
+
+checkpoint:
+  enabled: true
+  checkpoint_dir: dllm_checkpoints/chadgpt_diffusion_gemma_lora/
+  model_save_format: safetensors
+  save_consolidated: false   # saves the LoRA adapter; merge for inference (see runbook)
+
+distributed:
+  strategy: fsdp2
+  dp_size: none
+  tp_size: 1
+  cp_size: 1
+  pp_size: 1
+  ep_size: 1                 # <-- single GPU
+  sequence_parallel: false
+  activation_checkpointing: true
+  mp_policy:
+    param_dtype: bfloat16
+    reduce_dtype: float32
+    output_dtype: float32
+  autocast_dtype: bfloat16
+  offload_policy: null
+  moe:
+    reshard_after_forward: false
+
+dllm:
+  mode: block_diffusion
+  block_size: 256
+  vocab_size: 262144
+  eps: 0.001
+  pad_block_size: 256
+  pad_seq_len_divisible: 256
+
+optimizer:
+  _target_: torch.optim.AdamW
+  betas: [0.95, 0.99]
+  eps: 1.0e-8
+  lr: 1.5e-4
+  weight_decay: 1.0e-4
+
+clip_grad_norm:
+  max_norm: 1.0
+
+lr_scheduler:
+  lr_warmup_steps: 25
+  init_lr: 0.0
+  lr_decay_style: cosine
+  min_lr: 1.5e-5
+
+dataset:
+  _target_: nemo_automodel.components.datasets.llm.chat_dataset.ChatDataset
+  path_or_dataset_id: data/chat_train.jsonl
+  split: train
+  shuffle_seed: 42
+  seq_length: 2048
+  truncation: true
+  unshifted: true
+  mask_history: true
+  tokenizer:
+    pretrained_model_name_or_path: google/diffusiongemma-26B-A4B-it
+
+dataloader:
+  _target_: torchdata.stateful_dataloader.StatefulDataLoader
+  collate_fn: nemo_automodel.components.datasets.utils.default_collater
+  shuffle: true
