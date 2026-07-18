@@ -1,0 +1,116 @@
+# ChadGPT — DiffusionGemma (26B-A4B) full-SFT config for NeMo AutoModel.
+# Adapted from NVIDIA-NeMo/Automodel examples/dllm_sft/diffusion_gemma_sft.yaml.
+# Only the dataset path + seq_length are changed for our data; the diffusion / MoE /
+# FSDP settings are kept as NVIDIA ships them.
+#
+# REQUIRES an 8-GPU node (ep_size: 8) + transformers >= 5.11.0 + nemo-automodel.
+# Launch (from the cloned Automodel repo, with this file + our data alongside):
+#   torchrun --standalone --nproc-per-node=8 \
+#       examples/dllm_sft/finetune.py -c <path>/diffusion_gemma_sft.yaml
+#
+# Build the dataset first:  bash nemo/build_dataset.sh   -> data/chat_train.jsonl
+
+recipe: DiffusionGemmaSFTRecipe
+
+step_scheduler:
+  global_batch_size: 8
+  local_batch_size: 1
+  log_remote_every_steps: 5
+  ckpt_every_steps: 400
+  val_every_steps: 100000
+  max_steps: 2000          # ~16k examples @ gbs 8; raise/lower to hit ~2-3 passes over your set
+  num_epochs: 1
+
+dist_env:
+  backend: nccl
+  timeout_minutes: 10
+
+seed: 42
+
+wandb:
+  enable: false
+  project: chadgpt-diffusiongemma-sft
+
+model:
+  _target_: nemo_automodel.NeMoAutoModelForCausalLM.from_pretrained
+  pretrained_model_name_or_path: google/diffusiongemma-26B-A4B-it
+  torch_dtype: float32
+  canvas_length: 256       # response region; our 3-suggestion JSON fits well under this
+  self_conditioning: true
+  freeze_router: true
+  backend:
+    _target_: nemo_automodel.components.models.common.BackendConfig
+    attn: sdpa
+    linear: torch
+    rms_norm: torch_fp32
+    experts: torch_mm
+    dispatcher: torch
+    enable_hf_state_dict_adapter: true
+    enable_fsdp_optimizations: true
+
+loss_fn:
+  _target_: nemo_automodel.components.loss.masked_ce.MaskedCrossEntropy
+
+checkpoint:
+  enabled: true
+  checkpoint_dir: dllm_checkpoints/chadgpt_diffusion_gemma_sft/
+  model_save_format: safetensors
+  save_consolidated: true   # consolidated HF-loadable safetensors for inference/export
+
+distributed:
+  strategy: fsdp2
+  dp_size: none
+  tp_size: 1
+  cp_size: 1
+  pp_size: 1
+  ep_size: 8               # <-- 8 GPUs. On fewer GPUs this recipe will not run as-is.
+  sequence_parallel: false
+  activation_checkpointing: true
+  mp_policy:
+    param_dtype: bfloat16
+    reduce_dtype: float32
+    output_dtype: float32
+  offload_policy: null
+  moe:
+    reshard_after_forward: false
+
+dllm:
+  mode: block_diffusion
+  block_size: 256
+  vocab_size: 262144
+  eps: 0.001
+  pad_block_size: 256
+  pad_seq_len_divisible: 256
+
+optimizer:
+  _target_: torch.optim.AdamW
+  betas: [0.95, 0.99]
+  eps: 1.0e-8
+  lr: 1.5e-4
+  weight_decay: 1.0e-4
+
+clip_grad_norm:
+  max_norm: 1.0
+
+lr_scheduler:
+  lr_warmup_steps: 25
+  init_lr: 0.0
+  lr_decay_style: cosine
+  min_lr: 1.5e-5
+
+dataset:
+  _target_: nemo_automodel.components.datasets.llm.chat_dataset.ChatDataset
+  path_or_dataset_id: data/chat_train.jsonl   # our pipeline output (OpenAI chat-messages)
+  split: train
+  shuffle_seed: 42
+  seq_length: 2048          # bumped from 1024: our long CSS+MAOS system prompt needs the room
+  truncation: true
+  unshifted: true
+  mask_history: true        # loss only on the assistant turn (like train_on_responses_only)
+  tokenizer:
+    pretrained_model_name_or_path: google/diffusiongemma-26B-A4B-it
+
+dataloader:
+  _target_: torchdata.stateful_dataloader.StatefulDataLoader
+  collate_fn: nemo_automodel.components.datasets.utils.default_collater
+  shuffle: true
