@@ -1,14 +1,3 @@
-"""Offline BATCHED teacher labeling with vLLM (no HTTP server, no --workers).
-This replaces the serve_teacher.sh + label_with_teacher.py (HTTP) path for bulk
-runs. It loads the teacher once and hands vLLM ALL prompts at once via llm.chat(),
-so vLLM does optimal continuous batching with CUDA graphs — far faster than firing
-concurrent HTTP requests at a served model (which stalled on JIT + scheduling on
-the GH200). Same prompts, same output format; reuses the builders from
-label_with_teacher.py.
-Usage (on the box — this OWNS the GPU while it runs; no separate teacher server):
-  python3 scripts/label_offline.py data/interim/all_tasks.jsonl \
-      --out data/interim/labeled.jsonl --model Qwen/Qwen2.5-14B-Instruct
-"""
 import argparse, json, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from label_with_teacher import (SYS_PROMPT, stream_a_user, stream_b_user, stream_maos_user, parse_json)

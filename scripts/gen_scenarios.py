@@ -1,18 +1,3 @@
-"""Stream B: deterministic screening oracle -> stage-coverage label tasks.
-Raw conversations rarely walk the clean qualifying->confirming->eligible/ineligible
-flow with all four screening keys. This generator manufactures CONTEXT blocks that
-cover that flow exhaustively, plus the edge cases (greeting/casual/logistics/offtopic).
-The CONTEXT is fully deterministic here; the teacher only writes the 3 suggestions.
-Screening checklist (order matters):
-  property_use, bankruptcy_past_3yr, foreclosure_past_2yr, late_payments_past_12mo
-Eligibility oracle:
-  ineligible if bankruptcy_past_3yr OR foreclosure_past_2yr OR late_payments_past_12mo is "yes".
-  otherwise eligible. (property_use is informational, never disqualifying.)
-Output records:  {kind:'scenario', case, context:{...}, client_latest, is_first}
-where context has the fields the CSS system prompt's CONTEXT block expects.
-Usage:
-  python3 gen_scenarios.py --out scenarios.jsonl --n 4000
-"""
 import argparse, itertools, json, random, sys
 KEYS = ["property_use", "bankruptcy_past_3yr", "foreclosure_past_2yr", "late_payments_past_12mo"]
 PROPERTY_USES = ["live in it myself", "rent it out", "use as a second home", "buy for my daughter"]

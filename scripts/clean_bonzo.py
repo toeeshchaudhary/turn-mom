@@ -1,15 +1,3 @@
-"""Clean Bonzo SMS JSON -> {file, source, turns:[{role,text}]}.
-Bonzo threads are real Agent<->Client text messages. We normalize roles
-(Agent->agent, Client->client), drop empty/automated lines, and collapse
-consecutive same-speaker runs into one turn (people fire several texts in a row).
-Input : one Bonzo .json per conversation (raw OR Clean Redacted). The redacted
-        variant just has {NAME_GIVEN}-style tokens in place of PII; the logic is
-        identical and idempotent either way.
-Output: JSONL, one {file, source, turns} object per conversation.
-Usage:
-  python3 clean_bonzo.py a.json b.json ... --out bonzo_clean.jsonl
-  find <dir> -name '*.json' -print0 | xargs -0 python3 clean_bonzo.py --out bonzo_clean.jsonl
-"""
 import argparse, json, os, re, sys
 DROP_RE = re.compile(
     r"^\s*(unsubscribe|reply stop|msg\s*&?\s*data rates|this is an automated)",

@@ -1,30 +1,8 @@
-#!/usr/bin/env python3
-"""Stream C: MAOS behavior scenarios grounded in NAF's own playbook.
-
-The screening streams (A: real Bonzo, B: gen_scenarios) only teach QUALIFYING.
-They never teach the model to STOP selling, show empathy, handle objections, or
-answer loan questions — which is exactly what the co-owner flagged. This generator
-manufactures scenarios for every non-qualify MAOS mode, seeded from NAF's actual
-material (the "If client says X -> say Y" library, Chad's 200-Q rebuttal PDF, the
-Not-Now doctrine, emotional-regulation scripts).
-
-Each record carries the SAME `directive` the orchestrator (ui/server.ts MODE_DIRECTIVES)
-appends at inference, so training matches serving. Where NAF has an ideal reply, we
-pass it as an `anchor` the teacher turns into one of the 3 suggestions (like Stream A).
-
-Output records: {kind:'maos', mode, directive, anchor, context:{...}, case}
-
-Usage:
-  python3 gen_maos_scenarios.py --out maos.jsonl --per 60
-"""
 import argparse, json, random, sys
-
 CTX_FIELDS = ["Stage", "Next question key", "Answers collected", "Ineligibility reason",
               "Agent name", "Client name", "Client's latest message", "Is first message"]
 AGENTS = ["Sarah", "Marcus", "Priya", "Diego", "Nina", "Omar", "Kartikay", "KK", "Alex"]
 CLIENTS = ["Mike", "John", "Maria", "Tyler", "Grace", "Luis", "Anas", "Rosa", "Ethan", "Dana"]
-
-# directives MUST match ui/server.ts MODE_DIRECTIVES (train == serve)
 D = {
  "empathy": ("SITUATION: the client just shared something emotionally heavy (grief, illness, hospital, "
    "job loss, divorce). Respond as a caring human, NOT a salesperson. Acknowledge their situation "
@@ -61,8 +39,6 @@ D = {
    "to how you can help with their mortgage. Do NOT engage the content, do NOT be preachy, awkward, or use "
    "euphemisms. Brief and unbothered."),
 }
-
-# seed messages per mode; anchor = NAF's ideal reply (from the playbooks) when we have one
 SEEDS = {
  "empathy": [(m, None) for m in [
    "I just lost my wife", "my husband passed away last month", "I just lost my job",
@@ -109,14 +85,10 @@ SEEDS = {
    ["ok", "sounds good", "thanks", "great", "it's been 2 days and the loan officer never reached out",
     "he still hasn't called me", "when will they contact me?"]],
 }
-
-
 def ctx(stage, next_key, answers, reason, agent, client, msg, is_first):
     return {"Stage": stage, "Next question key": next_key, "Answers collected": answers,
             "Ineligibility reason": reason, "Agent name": agent, "Client name": client,
             "Client's latest message": msg, "Is first message": is_first}
-
-
 def make(mode, msg, anchor, rng):
     agent, client = rng.choice(AGENTS), rng.choice(CLIENTS)
     if mode == "not_now":
@@ -131,8 +103,6 @@ def make(mode, msg, anchor, rng):
     else:
         c = ctx("qualifying", "property_use", "N/A", "N/A", agent, client, msg, "no")
     return {"kind": "maos", "mode": mode, "directive": D[mode], "anchor": anchor, "context": c, "case": mode}
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
@@ -148,7 +118,5 @@ def main():
                 out.write(json.dumps(make(mode, msg, anchor, rng)) + "\n")
                 n += 1
     print(f"[gen_maos_scenarios] wrote {n} records ({len(SEEDS)} modes) -> {args.out}", file=sys.stderr)
-
-
 if __name__ == "__main__":
     main()

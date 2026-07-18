@@ -1,16 +1,3 @@
-"""Clean ASR call transcripts -> {file, source, turns:[{role,text}]}.
-Transcripts look like:
-    [08:43:18] internal: thank you for calling new american funding
-    [08:43:19] Customer: people make them
-    [08:43:27] SYSTEM: Alexander Roberson joined call
-We map internal->agent, Customer->client, drop SYSTEM/IVR/boilerplate lines,
-strip timestamps, and collapse same-speaker runs. The ASR is noisy (garbled
-names, backchannel) — that's fine: transcripts are used for FLOW/STAGE coverage,
-and the teacher LLM rewrites them into clean text register during labeling.
-We tag source='transcript' so voice sampling can prefer bonzo.
-Usage:
-  find <dir> -name '*.txt' -print0 | xargs -0 python3 clean_transcript.py --out calls_clean.jsonl
-"""
 import argparse, json, os, re, sys
 LINE_RE = re.compile(r"^\[\d{2}:\d{2}:\d{2}\]\s*([A-Za-z ]+?):\s*(.*)$")
 BOILER_RE = re.compile(

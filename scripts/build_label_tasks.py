@@ -1,16 +1,3 @@
-"""Stream A: turn cleaned conversations into per-agent-turn LABEL TASKS.
-For every agent turn that has at least one preceding client turn, emit a task:
-  {file, source, turn_idx, is_first, history:[{role,text}...], gold_reply:str}
-`history` = everything before the agent turn. `gold_reply` = the real agent
-message (this anchors the student on genuine rep voice). Downstream, the teacher
-LLM infers the CONTEXT block from `history` and writes 2 alternative suggestions
-around a text-normalized `gold_reply`.
-We cap agent turns per conversation (--max-per-convo) so a few long threads
-don't dominate, and skip agent turns that are pure logistics noise if too short.
-Usage:
-  python3 build_label_tasks.py bonzo_clean.jsonl calls_clean.jsonl \
-      --out tasks.jsonl --max-per-convo 6
-"""
 import argparse, json, random, sys
 def tasks_from_convo(rec, max_per):
     turns = rec["turns"]

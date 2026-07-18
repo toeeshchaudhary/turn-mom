@@ -1,23 +1,8 @@
-"""Deterministic guardrail gate over teacher-labeled records.
-Drops any example that violates the hard product rules so we never train on a
-bad label. Rejects are written to --rejects with a reason for inspection.
-Checks:
-  - exactly 3 recommendations, each a non-empty string
-  - confidence in {high, medium, low}
-  - <= 3 sentences and <= 400 chars per message
-  - no rates/APR/percentages/dollar-amount payments
-  - the 3 messages don't all start with the same word (anti-AI-symmetry)
-  - ineligible stage: no "failed/rejected/denied/disqualified"
-  - greeting (is_first + greeting-ish latest): each message names New American Funding
-Usage:
-  python3 audit_gate.py labeled.jsonl --out labeled.audited.jsonl --rejects rejects.jsonl
-"""
 import argparse, json, re, sys
 RATE_RE = re.compile(r"\b\d+(\.\d+)?\s?%|\bAPR\b|\$\s?\d", re.I)
 TOKEN_RE = re.compile(r"\{[A-Z][A-Z_]*\}")   
 FORBIDDEN_INELIGIBLE = re.compile(r"\b(failed|rejected|denied|disqualified)\b", re.I)
 GREETING_RE = re.compile(r"^\s*(hey|hi|hello)\b", re.I)
-# screening/pitch language that must NOT appear when we're in a don't-sell mode
 SCREEN_RE = re.compile(
     r"\b(property|bankruptc|foreclosur|late (mortgage )?payment|pre-?approv|"
     r"application|apply|primary residence|investment property|how do you plan (on |to )?us)",
@@ -69,8 +54,6 @@ def check(rec):
         for m in msgs:
             if "new american funding" not in m.lower():
                 return "greeting message missing 'New American Funding'"
-
-    # MAOS mode-specific guardrails (Stream C)
     mode = rec.get("mode")
     if mode == "empathy":
         for m in msgs:

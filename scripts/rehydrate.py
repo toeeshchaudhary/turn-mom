@@ -1,18 +1,3 @@
-"""Rehydrate redaction placeholders -> realistic surrogate values.
-CRITICAL: the redacted data contains literal curly tokens ({NAME_GIVEN},
-{PHONE_NUMBER}, ...). If those reach training, the student learns to EMIT them
-("Hey {NAME}!") — the exact bug we saw in the old model. This step swaps every
-token for a realistic surrogate BEFORE the teacher ever sees the text, so all
-downstream text (history, gold reply, suggestions) is natural.
-Deterministic per conversation (seeded by filename) so a rerun is stable and the
-same conversation reads consistently. We also detect and attach a per-convo
-`agent_name` and `client_name` surrogate (from the "this is X with New American
-Funding" / "Hi X" patterns) so they can be threaded into the CONTEXT block.
-Input : cleaned convo JSONL ({file, source, turns}).
-Output: same, with tokens replaced + {agent_name, client_name} added.
-Usage:
-  python3 rehydrate.py bonzo_clean.jsonl --out bonzo_hydrated.jsonl
-"""
 import argparse, hashlib, json, re, sys
 FIRST_NAMES = ["Marcus", "Sarah", "Diego", "Priya", "Jordan", "Alicia", "Tyler",
                "Nina", "Andre", "Grace", "Omar", "Hannah", "Luis", "Kayla",

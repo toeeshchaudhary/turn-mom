@@ -1,29 +1,11 @@
-#!/usr/bin/env python3
-"""Mine real Bonzo threads for MAOS edge-case scenarios (Stream C, REAL inputs).
-
-The Bonzo dumps (chat_history format) are mixed-tenant and often UNREDACTED. We sort
-each thread by timestamp, keep only mortgage-relevant convos, then harvest real CLIENT
-messages that hit an emotional / objection / life-event moment. Each becomes a MAOS task
-with the real (redacted) client message as the input — the teacher later writes the
-MAOS-ideal reply. We do NOT keep the real rep reply (usually the screener bug).
-
-Output: {kind:'maos', mode, directive, context, source:'bonzo_mined'} — same shape as
-gen_maos_scenarios, so it flows straight through the existing labeling pipeline.
-
-Usage:
-  python3 mine_bonzo.py conversations.jsonl --out bonzo_mined.jsonl --per 300
-"""
 import argparse, json, os, random, re, sys
 from collections import Counter
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from gen_maos_scenarios import D, ctx, AGENTS, CLIENTS
-
 MORTGAGE_RE = re.compile(
     r"\b(mortgage|refinanc|home loan|loan officer|pre-?approv|interest rate|down payment|"
     r"closing cost|escrow|new american funding|home equity|\brefi\b|underwrit|appraisal|"
     r"credit score|loan amount|purchase a home|buy a home)\b", re.I)
-
-# mode detectors on the CLIENT message (high-recall regex), in priority order
 MODE_RE = [
     ("life_event", re.compile(
         r"(lost my (job|wife|husband|mom|dad|mother|father)|passed away|\bdivorce|"
@@ -47,10 +29,6 @@ MODE_RE = [
         r"\b(how much (can i|do i)|what (credit|score|documents|is a|are)|can i (buy|qualify|afford)|"
         r"do i need|how (long|does)|difference between).*\?", re.I)),
 ]
-
-
-# common US first names for standalone-name redaction (ambiguous dictionary-words
-# like May/June/Mark/Bill/Will/Grace/Hope/Faith deliberately excluded to avoid over-redaction)
 NAMES = frozenset("""james john robert michael david richard joseph thomas charles christopher daniel
 matthew anthony donald steven paul andrew joshua kenneth kevin brian george edward ronald timothy jason
 jeffrey ryan jacob gary nicholas eric jonathan stephen larry justin scott brandon benjamin samuel gregory
@@ -62,52 +40,36 @@ debra rachel carolyn janet maria heather diane julie joyce victoria kelly christ
 lauren judith megan cheryl andrea hannah jacqueline gloria teresa sara janice marie julia kathryn frances
 alexis rosa kayla dustin francisco selena justin jenna kenna anas priya diego nina omar marcus luis grace
 tyler""".split())
-
-
-# redact PII straight to realistic SURROGATES (no curly tokens, no real PII) so the
-# mined text reads naturally and passes the pipeline's token-leak gate.
 SURR = ["Jordan", "Casey", "Taylor", "Morgan", "Riley", "Avery", "Quinn", "Reese",
         "Devon", "Skylar", "Rowan", "Sage", "Harper", "Emerson"]
 def _sur(s):
     return SURR[abs(hash(s.strip().lower())) % len(SURR)]
-
-
 def redact(t):
     t = re.sub(r"https?://\S+", "", t)
     t = re.sub(r"[\w.+-]+@[\w-]+\.[\w.]+", "someone@example.com", t)
     t = re.sub(r"\+?\d[\d\-\(\)\s]{7,}\d", "(555) 010-4321", t)
     t = re.sub(r"\$\s?[\d,]+(?:\.\d+)?", "$300k", t)
-    t = re.sub(r"\b\d{1,6}\s+[NSEW]\.?\s+[A-Z][a-z]+", "a property nearby", t)  # "6019 S Kedzie"
+    t = re.sub(r"\b\d{1,6}\s+[NSEW]\.?\s+[A-Z][a-z]+", "a property nearby", t)  
     NAME = r"[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?"
     t = re.sub(rf"\b(hi|hey|hello|thanks|thank you|dear)\s+({NAME})",
                lambda m: f"{m.group(1)} {_sur(m.group(2))}", t, flags=re.I)
     t = re.sub(rf"\b(I'?m|this is|my name is|it'?s|name is)\s+({NAME}(?:\s+[A-Z][a-z]+)?)",
                lambda m: f"{m.group(1)} {_sur(m.group(2))}", t, flags=re.I)
-    t = re.sub(rf"[-–—]\s*({NAME})\s*$", lambda m: f"- {_sur(m.group(1))}", t)  # signature
-    # standalone common first names anywhere (catches residual leaks)
+    t = re.sub(rf"[-–—]\s*({NAME})\s*$", lambda m: f"- {_sur(m.group(1))}", t)  
     t = re.sub(r"\b[A-Z][a-z]+\b",
                lambda m: _sur(m.group(0)) if m.group(0).lower() in NAMES else m.group(0), t)
     return re.sub(r"\s{2,}", " ", t).strip()
-
-
-# map the detector name -> the MAOS mode (same routing as ui/server.ts)
 MODE_MAP = {"life_event": "empathy", "not_interested": "objection", "busy": "logistics",
             "stop": "stop", "escalation": "escalation", "other_lender": "other_lender",
             "rate_shopping": "rate_shopping", "loan_question": "loan_question"}
-
-
 def detect_mode(msg):
     for mode, rx in MODE_RE:
         if rx.search(msg):
             return mode
     return None
-
-
 def norm(role):
     r = (role or "").strip().lower()
     return "agent" if r == "agent" else ("client" if r == "client" else None)
-
-
 def load_convos(path):
     for line in open(path, encoding="utf-8"):
         line = line.strip()
@@ -122,8 +84,6 @@ def load_convos(path):
         turns = [(r, t) for r, t in turns if r and t]
         if turns:
             yield turns
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("convos")
@@ -133,7 +93,6 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
     rng = random.Random(args.seed)
-
     pool = {m: [] for m, _ in MODE_RE}
     mortgage = nonmort = 0
     for turns in load_convos(args.convos):
@@ -148,7 +107,6 @@ def main():
             mode = detect_mode(text)
             if mode:
                 pool[mode].append(redact(text))
-
     counts = Counter()
     seen = set()
     with open(args.out, "w", encoding="utf-8") as out:
@@ -170,7 +128,5 @@ def main():
                 counts[mode] += 1
     print(f"[mine_bonzo] mortgage_convos={mortgage} non_mortgage={nonmort} "
           f"mined={sum(counts.values())} {dict(counts)}", file=sys.stderr)
-
-
 if __name__ == "__main__":
     main()

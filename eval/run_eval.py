@@ -1,16 +1,9 @@
-"""Send eval CONTEXT blocks to the served student and score schema + guardrails.
-For each case: builds [system=CSS prompt, user=CONTEXT block], calls the vLLM
-OpenAI endpoint, then reuses the deterministic audit checks to score the reply.
-Prints per-case PASS/FAIL and the 3 suggestions so you can eyeball voice quality.
-Usage (on the box, after serve.sh is up):
-  python3 run_eval.py --base http://localhost:8000/v1 --model naf
-"""
 import argparse, json, os, sys, urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "scripts"))
 from audit_gate import check
 from to_sft import ctx_block, SYS_PROMPT
-from gen_maos_scenarios import D as MODE_DIRECTIVES   # same directives the orchestrator sends
+from gen_maos_scenarios import D as MODE_DIRECTIVES   
 def call(base, model, ctx, directive=""):
     user = ctx_block(ctx) + (("\n\n" + directive) if directive else "")
     body = json.dumps({

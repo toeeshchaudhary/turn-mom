@@ -1,25 +1,5 @@
-"""Unsloth bf16-LoRA SFT on the MAOS RecommendationResponse task.
-
-Trains the student to emit the 3-suggestion JSON given (system prompt + CONTEXT block),
-assistant-only loss. Handles two model families from the SAME chat-messages dataset:
-
-  * Mistral-Small-24B  (default)      -> FastLanguageModel, [INST]/[/INST] masking
-  * Gemma-4-26B-a4b    (--model ...)  -> FastModel, <start_of_turn> masking, vision layers OFF
-    (the exact model + recipe the prior team proved: r16/a32, bf16 no-quant, ~73/94GB on a GH200)
-
-DiffusionGemma is NOT trained here — it uses NeMo (nemo/diffusion_gemma_lora_1gpu.yaml).
-
-Usage:
-  python3 unsloth_train.py --data data/chat_train.jsonl --val data/chat_val.jsonl \
-      --model unsloth/Mistral-Small-24B-Instruct-2501 --bsz 4 --epochs 1
-  python3 unsloth_train.py --data data/chat_train.jsonl --val data/chat_val.jsonl \
-      --model unsloth/gemma-4-26b-a4b-it --bsz 2 --grad-accum 8 --epochs 2   # Gemma-4 path
-"""
 import argparse
-
 TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True)
@@ -36,17 +16,13 @@ def main():
     ap.add_argument("--r", type=int, default=16)
     ap.add_argument("--alpha", type=int, default=32)
     args = ap.parse_args()
-
     from datasets import load_dataset
     from trl import SFTTrainer, SFTConfig
     from transformers import EarlyStoppingCallback
     from unsloth.chat_templates import train_on_responses_only
-
     is_gemma = "gemma" in args.model.lower()
     out = args.out or (f"out/{'gemma' if is_gemma else 'mistral'}_naf_lora")
-
     if is_gemma:
-        # Gemma-4 is multimodal MoE -> FastModel, keep vision layers frozen (text-only data)
         from unsloth import FastModel
         model, tok = FastModel.from_pretrained(
             model_name=args.model, max_seq_length=args.maxlen, load_in_4bit=False, dtype=None)
@@ -66,16 +42,10 @@ def main():
             target_modules=TARGET_MODULES,
             use_gradient_checkpointing="unsloth", random_state=3407)
         instruction_part, response_part = "[INST]", "[/INST]"
-
     def fmt(ex):
         return {"text": tok.apply_chat_template(ex["messages"], tokenize=False, add_generation_prompt=False)}
-
     train_ds = load_dataset("json", data_files=args.data, split="train").map(fmt)
     val_ds = load_dataset("json", data_files=args.val, split="train").map(fmt) if args.val else None
-
-    # train to a ceiling of --epochs, but eval every --eval-steps and keep the BEST
-    # checkpoint by eval loss + stop early — the real defense against overfitting a 26B
-    # on a smallish set (this, not the epoch count, is what decides "how long").
     has_val = val_ds is not None
     cfg = SFTConfig(
         output_dir=out,
@@ -108,7 +78,5 @@ def main():
     model.save_pretrained(out)
     tok.save_pretrained(out)
     print(f"[train] adapter saved -> {out}")
-
-
 if __name__ == "__main__":
     main()

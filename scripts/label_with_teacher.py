@@ -1,21 +1,3 @@
-"""Label tasks with the teacher LLM -> RecommendationResponse training examples.
-Handles both streams:
-  Stream A (real convos): task has {history, gold_reply}. The teacher infers the
-    CONTEXT block from history AND returns 3 suggestions, one of which is a lightly
-    cleaned, text-register version of the real rep reply (anchors genuine voice;
-    also rewrites noisy ASR transcript replies into clean SMS text).
-  Stream B (scenarios): task has {context}. The teacher writes 3 suggestions for
-    the given, deterministic CONTEXT block.
-Output record (one per task):
-  {context:{...six fields...}, recommendations:[{suggested_message, confidence}x3],
-   meta:{source, file, kind, case}}
-Use --dry-run to fabricate deterministic stub labels (no teacher needed) so you
-can smoke-test the plumbing locally before spinning up the GPU teacher.
-Usage:
-  TEACHER_BASE_URL=http://localhost:8001/v1 TEACHER_MODEL=teacher \
-    python3 label_with_teacher.py tasks.jsonl --out labeled.jsonl
-  python3 label_with_teacher.py tasks.jsonl --out labeled.jsonl --dry-run   # local test
-"""
 import argparse, json, os, re, sys
 SYS_PROMPT = open(os.path.join(os.path.dirname(__file__), "..", "prompts",
                                 "css_maos_system_prompt.txt"), encoding="utf-8").read()

@@ -1,16 +1,3 @@
-"""Audited labels -> chat `messages` SFT file for Unsloth/TRL.
-Each training record:
-  system    = the full CSS system prompt (prompts/css_maos_system_prompt.txt)
-  user      = the rendered CONTEXT block
-  assistant = the RecommendationResponse JSON (exactly what we want the model to emit)
-We render the assistant target as compact, deterministic JSON so the student
-learns a stable output shape:
-  {"recommendations":[{"suggested_message":"...","confidence":"high"}, x3]}
-Also shuffles and does a train/val split.
-Usage:
-  python3 to_sft.py labeled.audited.jsonl --out-train data/sft/train.jsonl \
-      --out-val data/sft/val.jsonl --val-frac 0.03
-"""
 import argparse, json, os, random, sys
 SYS_PROMPT = open(os.path.join(os.path.dirname(__file__), "..", "prompts",
                                 "css_maos_system_prompt.txt"), encoding="utf-8").read()
@@ -42,7 +29,7 @@ def main():
                 continue
             rec = json.loads(line)
             user = ctx_block(rec["context"])
-            if rec.get("directive"):   # MAOS mode example: append the same directive the orchestrator sends
+            if rec.get("directive"):   
                 user = user + "\n\n" + rec["directive"]
             rows.append({"messages": [
                 {"role": "system", "content": SYS_PROMPT},

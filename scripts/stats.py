@@ -1,14 +1,3 @@
-"""Print training + dataset stats for the ChadGPT run. No deps beyond stdlib.
-Reads whatever artifacts exist and degrades gracefully if some are missing:
-  out/mistral_naf_lora/adapter_config.json         (LoRA config)
-  out/mistral_naf_lora/adapter_model.safetensors   (adapter param count, from header)
-  out/mistral_naf_lora/checkpoint-*/trainer_state.json  (loss history, runtime)
-  data/interim/all_tasks.jsonl, labeled.jsonl, labeled.ok.jsonl, rejects.jsonl
-  data/sft/train.jsonl, val.jsonl, train_small.jsonl
-  data/interim/bonzo_clean.jsonl, calls_clean.jsonl
-Usage:  python3 scripts/stats.py            (run from repo root)
-        python3 scripts/stats.py --root .   (or point at another checkout)
-"""
 import argparse, glob, json, os, struct
 SPARK = "▁▂▃▄▅▆▇█"
 def wc(path):
