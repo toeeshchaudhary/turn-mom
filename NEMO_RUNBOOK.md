@@ -40,6 +40,15 @@ BONZO_DUMP=data/raw/bonzo_new/conversations.jsonl \
 > **Redaction note:** `mine_bonzo.py` regex-redaction is high-recall, not compliance-grade — run a full
 > redaction pass (prior `redact_bonzo` / NER) before shipping a customer-facing model.
 
+## The two-model plan (same `data/chat_train.jsonl` feeds both)
+You're training **DiffusionGemma first, then Gemma-4** — the dataset is identical, only the tooling
+differs. Train, eval (the MAOS cases in `eval/cases.jsonl`), compare.
+| Model | Tool | Command |
+|---|---|---|
+| **DiffusionGemma-26B-a4b** (1st, experimental) | NeMo | `nemo/diffusion_gemma_lora_1gpu.yaml` (below) |
+| **Gemma-4-26B-a4b** (2nd, prior team's proven model) | Unsloth | `train/unsloth_train.py --model unsloth/gemma-4-26b-a4b-it` |
+| Mistral-24B (fallback, ours) | Unsloth | `train/unsloth_train.py --model unsloth/Mistral-Small-24B-Instruct-2501` |
+
 ## 3. Train — LoRA on 1 GH200
 ```bash
 torchrun --standalone --nproc-per-node=1 \
@@ -47,7 +56,15 @@ torchrun --standalone --nproc-per-node=1 \
     -c nemo/diffusion_gemma_lora_1gpu.yaml
 # adapter -> dllm_checkpoints/chadgpt_diffusion_gemma_lora/
 ```
-Config notes: `torch_dtype: bfloat16` (fp32 26B won't fit one GPU), `ep_size: 1`, `seq_length: 2048`
+**Then Gemma-4** (after testing DiffusionGemma), same dataset, via Unsloth:
+```bash
+python3 train/unsloth_train.py --data data/chat_train.jsonl --val data/chat_val.jsonl \
+    --model unsloth/gemma-4-26b-a4b-it --bsz 2 --grad-accum 8 --epochs 2   # -> out/gemma_naf_lora
+```
+(unsloth_train.py auto-detects Gemma → FastModel, `<start_of_turn>` masking, vision layers off — the
+prior team's proven recipe. Box-validate the first steps; if OOM, use QLoRA or drop seq_length.)
+
+Config notes (DiffusionGemma): `torch_dtype: bfloat16` (fp32 26B won't fit one GPU), `ep_size: 1`, `seq_length: 2048`
 (long system prompt), `canvas_length: 256` (response region — our JSON fits), `mask_history: true`
 (assistant-only loss), LoRA `dim 16 / alpha 32`. **If it OOMs:** shorten `seq_length` to 1536, or add
 `load_in_4bit: true` under `model:` (QLoRA), or reduce `local_batch_size`. Watch `nvidia-smi` on the
