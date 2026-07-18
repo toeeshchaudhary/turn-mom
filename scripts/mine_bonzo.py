@@ -49,20 +49,45 @@ MODE_RE = [
 ]
 
 
+# common US first names for standalone-name redaction (ambiguous dictionary-words
+# like May/June/Mark/Bill/Will/Grace/Hope/Faith deliberately excluded to avoid over-redaction)
+NAMES = frozenset("""james john robert michael david richard joseph thomas charles christopher daniel
+matthew anthony donald steven paul andrew joshua kenneth kevin brian george edward ronald timothy jason
+jeffrey ryan jacob gary nicholas eric jonathan stephen larry justin scott brandon benjamin samuel gregory
+alexander patrick jack dennis jerry tyler aaron jose henry adam nathan zachary carlos kyle noah ethan jeremy
+mary patricia jennifer linda elizabeth barbara susan jessica sarah karen nancy lisa margaret betty sandra
+ashley kimberly emily donna michelle carol amanda dorothy melissa deborah stephanie rebecca laura sharon
+cynthia kathleen amy angela shirley anna brenda pamela nicole samantha katherine christine emma catherine
+debra rachel carolyn janet maria heather diane julie joyce victoria kelly christina joan evelyn olivia
+lauren judith megan cheryl andrea hannah jacqueline gloria teresa sara janice marie julia kathryn frances
+alexis rosa kayla dustin francisco selena justin jenna kenna anas priya diego nina omar marcus luis grace
+tyler""".split())
+
+
+# redact PII straight to realistic SURROGATES (no curly tokens, no real PII) so the
+# mined text reads naturally and passes the pipeline's token-leak gate.
+SURR = ["Jordan", "Casey", "Taylor", "Morgan", "Riley", "Avery", "Quinn", "Reese",
+        "Devon", "Skylar", "Rowan", "Sage", "Harper", "Emerson"]
+def _sur(s):
+    return SURR[abs(hash(s.strip().lower())) % len(SURR)]
+
+
 def redact(t):
     t = re.sub(r"https?://\S+", "", t)
-    t = re.sub(r"[\w.+-]+@[\w-]+\.[\w.]+", "{EMAIL}", t)
-    t = re.sub(r"\+?\d[\d\-\(\)\s]{7,}\d", "{PHONE_NUMBER}", t)
-    t = re.sub(r"\$\s?[\d,]+(?:\.\d+)?", "{MONEY}", t)
-    t = re.sub(r"\b\d{1,6}\s+[NSEW]\.?\s+[A-Z][a-z]+", "{LOCATION_ADDRESS}", t)  # "6019 S Kedzie"
-    # names after greetings / intros / signatures (1-2 capitalized words)
+    t = re.sub(r"[\w.+-]+@[\w-]+\.[\w.]+", "someone@example.com", t)
+    t = re.sub(r"\+?\d[\d\-\(\)\s]{7,}\d", "(555) 010-4321", t)
+    t = re.sub(r"\$\s?[\d,]+(?:\.\d+)?", "$300k", t)
+    t = re.sub(r"\b\d{1,6}\s+[NSEW]\.?\s+[A-Z][a-z]+", "a property nearby", t)  # "6019 S Kedzie"
     NAME = r"[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?"
     t = re.sub(rf"\b(hi|hey|hello|thanks|thank you|dear)\s+({NAME})",
-               r"\1 {NAME_GIVEN}", t, flags=re.I)
+               lambda m: f"{m.group(1)} {_sur(m.group(2))}", t, flags=re.I)
     t = re.sub(rf"\b(I'?m|this is|my name is|it'?s|name is)\s+({NAME}(?:\s+[A-Z][a-z]+)?)",
-               r"\1 {NAME_GIVEN}", t, flags=re.I)
-    t = re.sub(rf"[-–—]\s*({NAME})\s*$", "- {NAME_GIVEN}", t)  # trailing signature
-    return re.sub(r"\s+", " ", t).strip()
+               lambda m: f"{m.group(1)} {_sur(m.group(2))}", t, flags=re.I)
+    t = re.sub(rf"[-–—]\s*({NAME})\s*$", lambda m: f"- {_sur(m.group(1))}", t)  # signature
+    # standalone common first names anywhere (catches residual leaks)
+    t = re.sub(r"\b[A-Z][a-z]+\b",
+               lambda m: _sur(m.group(0)) if m.group(0).lower() in NAMES else m.group(0), t)
+    return re.sub(r"\s{2,}", " ", t).strip()
 
 
 # map the detector name -> the MAOS mode (same routing as ui/server.ts)

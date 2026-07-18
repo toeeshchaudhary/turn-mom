@@ -4,7 +4,7 @@ import { join, extname } from "path";
 const PORT = Number(process.env.PORT ?? 8787);
 const VLLM_URL = process.env.VLLM_URL ?? "http://localhost:8000/v1";
 const MODEL = process.env.MODEL ?? "naf";
-const PROMPT_PATH = process.env.PROMPT_PATH ?? "../prompts/css_system_prompt.txt";
+const PROMPT_PATH = process.env.PROMPT_PATH ?? "../prompts/css_maos_system_prompt.txt";
 const DIST = join(import.meta.dir, "dist");
 
 const SYSTEM_PROMPT = readFileSync(join(import.meta.dir, PROMPT_PATH), "utf8");

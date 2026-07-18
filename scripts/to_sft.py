@@ -1,6 +1,6 @@
 """Audited labels -> chat `messages` SFT file for Unsloth/TRL.
 Each training record:
-  system    = the full CSS system prompt (prompts/css_system_prompt.txt)
+  system    = the full CSS system prompt (prompts/css_maos_system_prompt.txt)
   user      = the rendered CONTEXT block
   assistant = the RecommendationResponse JSON (exactly what we want the model to emit)
 We render the assistant target as compact, deterministic JSON so the student
@@ -13,7 +13,7 @@ Usage:
 """
 import argparse, json, os, random, sys
 SYS_PROMPT = open(os.path.join(os.path.dirname(__file__), "..", "prompts",
-                                "css_system_prompt.txt"), encoding="utf-8").read()
+                                "css_maos_system_prompt.txt"), encoding="utf-8").read()
 CTX_FIELDS = ["Stage", "Next question key", "Answers collected", "Ineligibility reason",
               "Agent name", "Client name", "Client's latest message", "Is first message"]
 def ctx_block(ctx):

@@ -8,13 +8,15 @@ Usage (on the box, after serve.sh is up):
 import argparse, json, os, sys, urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "scripts"))
-from audit_gate import check          
+from audit_gate import check
 from to_sft import ctx_block, SYS_PROMPT
-def call(base, model, ctx):
+from gen_maos_scenarios import D as MODE_DIRECTIVES   # same directives the orchestrator sends
+def call(base, model, ctx, directive=""):
+    user = ctx_block(ctx) + (("\n\n" + directive) if directive else "")
     body = json.dumps({
         "model": model, "temperature": 0.7, "max_tokens": 500,
         "messages": [{"role": "system", "content": SYS_PROMPT},
-                     {"role": "user", "content": ctx_block(ctx)}],
+                     {"role": "user", "content": user}],
     }).encode()
     req = urllib.request.Request(f"{base}/chat/completions", data=body,
                                  headers={"Content-Type": "application/json",
@@ -34,10 +36,12 @@ def main():
             continue
         case = json.loads(line)
         total += 1
-        raw = call(args.base, args.model, case["context"])
+        mode = case.get("mode")
+        directive = MODE_DIRECTIVES.get(mode, "") if mode else ""
+        raw = call(args.base, args.model, case["context"], directive)
         try:
             parsed = json.loads(raw[raw.find("{"):raw.rfind("}") + 1])
-            rec = {"context": case["context"], "recommendations": parsed["recommendations"]}
+            rec = {"context": case["context"], "recommendations": parsed["recommendations"], "mode": mode}
             reason = check(rec)
         except Exception as e:
             reason = f"unparseable JSON: {e}"
