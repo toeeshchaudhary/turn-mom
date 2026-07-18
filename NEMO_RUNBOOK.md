@@ -59,10 +59,18 @@ torchrun --standalone --nproc-per-node=1 \
 **Then Gemma-4** (after testing DiffusionGemma), same dataset, via Unsloth:
 ```bash
 python3 train/unsloth_train.py --data data/chat_train.jsonl --val data/chat_val.jsonl \
-    --model unsloth/gemma-4-26b-a4b-it --bsz 2 --grad-accum 8 --epochs 2   # -> out/gemma_naf_lora
+    --model unsloth/gemma-4-26b-a4b-it --bsz 2 --grad-accum 8   # -> out/gemma_naf_lora
 ```
-(unsloth_train.py auto-detects Gemma → FastModel, `<start_of_turn>` masking, vision layers off — the
-prior team's proven recipe. Box-validate the first steps; if OOM, use QLoRA or drop seq_length.)
+(auto-detects Gemma → FastModel, `<start_of_turn>` masking, vision layers off. Box-validate first steps;
+if OOM, QLoRA / drop seq_length.)
+
+### On epochs — don't hard-set a number
+`--epochs` is a **ceiling (default 3)**; the trainer evals every `--eval-steps` (100), keeps the **best
+checkpoint by eval_loss**, and **early-stops** (`--patience` 3). That's the real overfitting guard on a
+26B — watch the eval-loss curve, not the epoch count (the prior Gemma run flattened by ~epoch 2). For
+**DiffusionGemma** (NeMo has no auto early-stop): `val_every_steps: 100` + `ckpt_every_steps: 200` — let
+it run, then **probe the checkpoints** with `eval/run_eval.py` and keep the best. Set its `max_steps`
+to ~2-3× `ceil(train_examples / 8)` for your actual dataset size.
 
 Config notes (DiffusionGemma): `torch_dtype: bfloat16` (fp32 26B won't fit one GPU), `ep_size: 1`, `seq_length: 2048`
 (long system prompt), `canvas_length: 256` (response region — our JSON fits), `mask_history: true`

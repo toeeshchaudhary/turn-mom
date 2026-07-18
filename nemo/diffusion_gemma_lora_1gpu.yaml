@@ -17,10 +17,12 @@ step_scheduler:
   global_batch_size: 8
   local_batch_size: 1
   log_remote_every_steps: 5
-  ckpt_every_steps: 400
-  val_every_steps: 100000
-  max_steps: 2000          # tune to ~2-3 passes over your ~16-25k set
-  num_epochs: 1
+  ckpt_every_steps: 200     # checkpoint often — dLLM has no auto early-stop, so you PROBE checkpoints
+  val_every_steps: 100      # watch the eval-loss curve (was 100000 = never)
+  # max_steps = ~2-3 passes: ceil(num_train_examples / global_batch_size) * 2..3.
+  # e.g. 20k examples / gbs 8 = 2500 steps/epoch -> ~5000-7500. Recompute for YOUR set size.
+  max_steps: 6000
+  num_epochs: 3
 
 dist_env:
   backend: nccl
@@ -119,7 +121,7 @@ dataset:
   path_or_dataset_id: data/chat_train.jsonl
   split: train
   shuffle_seed: 42
-  seq_length: 2048
+  seq_length: 3072
   truncation: true
   unshifted: true
   mask_history: true

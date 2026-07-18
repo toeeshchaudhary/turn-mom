@@ -103,7 +103,7 @@ dataset:
   path_or_dataset_id: data/chat_train.jsonl   # our pipeline output (OpenAI chat-messages)
   split: train
   shuffle_seed: 42
-  seq_length: 2048          # bumped from 1024: our long CSS+MAOS system prompt needs the room
+  seq_length: 3072          # bumped from 1024: our long CSS+MAOS system prompt needs the room
   truncation: true
   unshifted: true
   mask_history: true        # loss only on the assistant turn (like train_on_responses_only)

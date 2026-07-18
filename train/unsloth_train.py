@@ -29,7 +29,9 @@ def main():
     ap.add_argument("--maxlen", type=int, default=4096)
     ap.add_argument("--bsz", type=int, default=4)
     ap.add_argument("--grad-accum", type=int, default=2)
-    ap.add_argument("--epochs", type=float, default=1.0)
+    ap.add_argument("--epochs", type=float, default=3.0, help="CEILING; early stopping decides the real number")
+    ap.add_argument("--eval-steps", type=int, default=100)
+    ap.add_argument("--patience", type=int, default=3, help="evals w/o eval_loss improvement before stopping")
     ap.add_argument("--lr", type=float, default=1.5e-4)
     ap.add_argument("--r", type=int, default=16)
     ap.add_argument("--alpha", type=int, default=32)
@@ -37,6 +39,7 @@ def main():
 
     from datasets import load_dataset
     from trl import SFTTrainer, SFTConfig
+    from transformers import EarlyStoppingCallback
     from unsloth.chat_templates import train_on_responses_only
 
     is_gemma = "gemma" in args.model.lower()
@@ -70,6 +73,10 @@ def main():
     train_ds = load_dataset("json", data_files=args.data, split="train").map(fmt)
     val_ds = load_dataset("json", data_files=args.val, split="train").map(fmt) if args.val else None
 
+    # train to a ceiling of --epochs, but eval every --eval-steps and keep the BEST
+    # checkpoint by eval loss + stop early — the real defense against overfitting a 26B
+    # on a smallish set (this, not the epoch count, is what decides "how long").
+    has_val = val_ds is not None
     cfg = SFTConfig(
         output_dir=out,
         per_device_train_batch_size=args.bsz,
@@ -82,12 +89,20 @@ def main():
         bf16=True,
         max_length=args.maxlen,
         dataset_text_field="text",
-        save_strategy="epoch",
-        eval_strategy="epoch" if val_ds else "no",
+        weight_decay=0.01,
+        eval_strategy="steps" if has_val else "no",
+        eval_steps=args.eval_steps if has_val else None,
+        save_strategy="steps" if has_val else "epoch",
+        save_steps=args.eval_steps,
+        save_total_limit=2,
+        load_best_model_at_end=has_val,
+        metric_for_best_model="eval_loss",
+        greater_is_better=False,
         report_to="none",
     )
-    trainer = SFTTrainer(model=model, processing_class=tok,
-                         train_dataset=train_ds, eval_dataset=val_ds, args=cfg)
+    callbacks = [EarlyStoppingCallback(early_stopping_patience=args.patience)] if has_val else []
+    trainer = SFTTrainer(model=model, processing_class=tok, train_dataset=train_ds,
+                         eval_dataset=val_ds, args=cfg, callbacks=callbacks)
     trainer = train_on_responses_only(trainer, instruction_part=instruction_part, response_part=response_part)
     trainer.train()
     model.save_pretrained(out)
