@@ -129,6 +129,41 @@ def label(task, dry):
         "case": task.get("case"),
     }
     return out
+def _fmt_secs(s):
+    s = int(s)
+    h, s = divmod(s, 3600)
+    m, s = divmod(s, 60)
+    return f"{h:d}:{m:02d}:{s:02d}" if h else f"{m:d}:{s:02d}"
+def _draw_bar(done, total, ok, fail, start, tty, width=32):
+    import time
+    el = time.time() - start
+    rate = done / el if el > 0 else 0
+    eta = (total - done) / rate if rate > 0 else 0
+    pct = (done / total * 100) if total else 0
+    fill = int((pct / 100) * width)
+    bar = "#" * fill + "." * (width - fill)
+    line = (f"[{bar}] {done}/{total} {pct:5.1f}% | ok {ok} fail {fail} | "
+            f"{rate:4.1f}/s | elapsed {_fmt_secs(el)} | ETA {_fmt_secs(eta)}")
+    if tty:
+        print("\r\033[K" + line, end="", file=sys.stderr, flush=True)
+    else:
+        print("[label] " + line, file=sys.stderr, flush=True)
+def _show_sample(res, done, tty):
+    ctx = res.get("context", {}) or {}
+    recs = res.get("recommendations", []) or []
+    meta = res.get("meta", {}) or {}
+    tag = meta.get("kind", "?")
+    case = meta.get("case") or ctx.get("Stage", "?")
+    latest = str(ctx.get("Client's latest message", ""))[:70]
+    head = "\n" if tty else ""
+    print(f"{head}  ┌─ sample @ {done} · kind={tag} · {case}", file=sys.stderr)
+    if latest:
+        print(f"  │ client: {latest}", file=sys.stderr)
+    for i, r in enumerate(recs[:3], 1):
+        conf = (r or {}).get("confidence", "?")
+        msg = str((r or {}).get("suggested_message", ""))[:110]
+        print(f"  │ [{conf:<6}] {msg}", file=sys.stderr)
+    print("  └─", file=sys.stderr)
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("tasks")
@@ -137,8 +172,14 @@ def main():
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--workers", type=int, default=16,
                     help="concurrent teacher requests (vLLM batches these)")
+    ap.add_argument("--show-every", type=int, default=150,
+                    help="print a full labeled sample every N completions (0 = never)")
+    ap.add_argument("--bar-every", type=int, default=5,
+                    help="refresh the progress bar every N completions")
     args = ap.parse_args()
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import time
+    from collections import Counter
     tasks = []
     with open(args.tasks, encoding="utf-8") as f:
         for line in f:
@@ -147,22 +188,62 @@ def main():
                 tasks.append(json.loads(line))
             if args.limit and len(tasks) >= args.limit:
                 break
+    total = len(tasks)
+    tty = sys.stderr.isatty()
+    # ---- startup banner: show exactly what this run will do ----
+    kinds = Counter(t.get("kind", "convo") for t in tasks)
+    print("=" * 60, file=sys.stderr)
+    print("  label_with_teacher", file=sys.stderr)
+    print(f"  tasks       : {total}  ({', '.join(f'{k}={v}' for k, v in kinds.items())})",
+          file=sys.stderr)
+    print(f"  prompt      : css_maos_system_prompt.txt ({len(SYS_PROMPT)} chars)", file=sys.stderr)
+    if args.dry_run:
+        print("  teacher     : DRY-RUN (stubbed, no vLLM call)", file=sys.stderr)
+    else:
+        print(f"  teacher     : {os.environ.get('TEACHER_MODEL', 'teacher')} @ "
+              f"{os.environ.get('TEACHER_BASE_URL', 'http://localhost:8001/v1')}", file=sys.stderr)
+    print(f"  workers     : {args.workers}   -> {args.out}", file=sys.stderr)
+    # preview the actual prompt for the first task so you can confirm the rules loaded
+    if tasks:
+        t0 = tasks[0]
+        u0 = (stream_maos_user(t0) if t0.get("kind") == "maos"
+              else stream_b_user(t0["context"]) if t0.get("kind") == "scenario"
+              else stream_a_user(t0))
+        print("  first user prompt preview:", file=sys.stderr)
+        for ln in u0.splitlines()[:6]:
+            print(f"    | {ln[:88]}", file=sys.stderr)
+    print("=" * 60, file=sys.stderr)
     from concurrent.futures import ThreadPoolExecutor, as_completed
     n = fail = done = 0
-    total = len(tasks)
-    with open(args.out, "w", encoding="utf-8") as out,         ThreadPoolExecutor(max_workers=args.workers) as pool:
+    fails = Counter()
+    start = time.time()
+    with open(args.out, "w", encoding="utf-8") as out, \
+         ThreadPoolExecutor(max_workers=args.workers) as pool:
         futs = {pool.submit(label, t, args.dry_run): i for i, t in enumerate(tasks)}
         for fut in as_completed(futs):
             done += 1
             try:
-                out.write(json.dumps(fut.result()) + "\n")
+                res = fut.result()
+                out.write(json.dumps(res) + "\n")
                 out.flush()
                 n += 1
+                if args.show_every and (done == 1 or done % args.show_every == 0):
+                    _show_sample(res, done, tty)
             except Exception as e:
                 fail += 1
-                print(f"[fail #{futs[fut]}] {e}", file=sys.stderr)
-            if done % 200 == 0:
-                print(f"[label] {done}/{total} ({n} ok, {fail} fail)", file=sys.stderr)
-    print(f"[label] wrote {n} labeled, {fail} failed -> {args.out}", file=sys.stderr)
+                fails[type(e).__name__] += 1
+                if fail <= 5:
+                    print(f"\n[fail #{futs[fut]}] {type(e).__name__}: {e}", file=sys.stderr)
+            if done % args.bar_every == 0 or done == total:
+                _draw_bar(done, total, n, fail, start, tty)
+    if tty:
+        print("", file=sys.stderr)  # newline after the live bar
+    el = time.time() - start
+    print("-" * 60, file=sys.stderr)
+    print(f"[label] done: {n} ok, {fail} failed of {total} in {_fmt_secs(el)} "
+          f"({n/el:.1f}/s) -> {args.out}", file=sys.stderr)
+    if fails:
+        print("  failures by type: " + ", ".join(f"{k}={v}" for k, v in fails.most_common()),
+              file=sys.stderr)
 if __name__ == "__main__":
     main()
