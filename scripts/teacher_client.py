@@ -2,6 +2,7 @@ import json, os, time, urllib.request, urllib.error
 BASE = os.environ.get("TEACHER_BASE_URL", "http://localhost:8001/v1")
 MODEL = os.environ.get("TEACHER_MODEL", "teacher")
 KEY = os.environ.get("TEACHER_API_KEY", "dummy")
+TIMEOUT = int(os.environ.get("TEACHER_TIMEOUT", "600"))
 def chat(messages, temperature=0.7, max_tokens=700, json_mode=True, retries=4):
     body = {
         "model": MODEL,
@@ -19,7 +20,7 @@ def chat(messages, temperature=0.7, max_tokens=700, json_mode=True, retries=4):
                 f"{BASE}/chat/completions", data=data,
                 headers={"Content-Type": "application/json",
                          "Authorization": f"Bearer {KEY}"})
-            with urllib.request.urlopen(req, timeout=120) as r:
+            with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
                 out = json.loads(r.read())
             return out["choices"][0]["message"]["content"]
         except (urllib.error.URLError, KeyError, TimeoutError) as e:

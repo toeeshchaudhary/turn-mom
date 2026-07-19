@@ -8,10 +8,11 @@ MODEL="${1:-nvidia/Llama-3.3-70B-Instruct-FP8}"
 QUANT="${QUANT:-}"
 ARGS=(
   --served-model-name teacher
-  --max-model-len 8192
+  --max-model-len "${MAXLEN:-6144}"   # >8192 overflows KV at high concurrency -> preemption thrash
   --gpu-memory-utilization 0.92
-  --enable-prefix-caching     # the ~1.5k-token system prompt is identical on every call -> cache it
-  --max-num-seqs 256          # let continuous batching pack many concurrent requests
+  --kv-cache-dtype fp8        # halve KV/token so 32-64 concurrent reqs fit without eviction
+  --enable-prefix-caching     # the ~2k-token system prompt is identical on every call -> cache it
+  --max-num-seqs 128          # continuous batching cap (actual limited by KV capacity)
   --port 8001
 )
 [ -n "$QUANT" ] && ARGS+=(--quantization "$QUANT")
