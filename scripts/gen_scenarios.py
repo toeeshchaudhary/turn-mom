@@ -1,12 +1,26 @@
 import argparse, itertools, json, random, sys
 KEYS = ["property_use", "bankruptcy_past_3yr", "foreclosure_past_2yr", "late_payments_past_12mo"]
+# For a first-time buyer (never owned a home / never had a mortgage), foreclosure and
+# late-mortgage-payment screening do not apply — you can't foreclose or miss mortgage
+# payments on a home you never had. Only property_use + bankruptcy are relevant.
+FIRST_TIME_KEYS = ["property_use", "bankruptcy_past_3yr"]
+FIRST_TIME_SKIP = ["foreclosure_past_2yr", "late_payments_past_12mo"]
 PROPERTY_USES = ["live in it myself", "rent it out", "use as a second home", "buy for my daughter"]
+# a first-time buyer can't be buying a "second home" (that implies owning a first one)
+FIRST_TIME_PROPERTY_USES = ["live in it myself", "rent it out", "buy for my daughter"]
 YESNO = ["yes", "no"]
+# openers that imply the client ALREADY owns a home (has a mortgage) -> full screening
 MORTGAGE_OPENERS = [
     "i want to pull some equity out of my house",
     "looking to refinance, rates dropped right",
-    "thinking about buying my first place",
     "can you help me lower my monthly payment",
+]
+# openers that signal a FIRST-TIME buyer -> skip foreclosure + late-mortgage
+FIRST_TIME_OPENERS = [
+    "thinking about buying my first place",
+    "looking to buy my first home",
+    "i'm a first-time buyer, where do i start",
+    "never owned a home before, want to buy one",
 ]
 ANSWER_FRAGMENTS = {
     "property_use": ["gonna live there", "it'd be a rental", "second home for us", "for my son actually"],
@@ -47,38 +61,55 @@ def ctx(stage, next_key="N/A", answers=None, reason="N/A", client_latest="",
             "Is first message": is_first,
         }
     }
+def base_answers(rng, first_time):
+    """Collected-answers baseline. First-time buyers skip foreclosure + late-mortgage (n/a)."""
+    uses = FIRST_TIME_PROPERTY_USES if first_time else PROPERTY_USES
+    a = {"property_use": rng.choice(uses), "bankruptcy_past_3yr": "no"}
+    if first_time:
+        a["foreclosure_past_2yr"] = "n/a"
+        a["late_payments_past_12mo"] = "n/a"
+    else:
+        a["foreclosure_past_2yr"] = "no"
+        a["late_payments_past_12mo"] = "no"
+    return a
 def gen(rng):
     case = rng.choices(
         ["qualifying", "confirming", "eligible", "ineligible",
          "greeting", "casual", "logistics", "offtopic"],
         weights=[34, 10, 10, 14, 8, 8, 8, 8], k=1,
     )[0]
+    # ~30% of screening scenarios are first-time buyers (skip foreclosure + late-mortgage)
+    first_time = rng.random() < 0.30
+    akeys = FIRST_TIME_KEYS if first_time else KEYS
     if case == "qualifying":
-        k = rng.randint(0, 3)                       
+        k = rng.randint(0, len(akeys) - 1)
+        uses = FIRST_TIME_PROPERTY_USES if first_time else PROPERTY_USES
         answered = {key: rng.choice(YESNO) if key != "property_use"
-                    else rng.choice(PROPERTY_USES) for key in KEYS[:k]}
-        next_key = KEYS[k]
-        latest = rng.choice(MORTGAGE_OPENERS) if k == 0 else rng.choice(ANSWER_FRAGMENTS[KEYS[k-1]])
+                    else rng.choice(uses) for key in akeys[:k]}
+        if first_time:                                  # skipped keys shown as not-applicable
+            for sk in FIRST_TIME_SKIP:
+                answered[sk] = "n/a"
+        next_key = akeys[k]
+        if k == 0:
+            latest = rng.choice(FIRST_TIME_OPENERS if first_time else MORTGAGE_OPENERS)
+        else:
+            latest = rng.choice(ANSWER_FRAGMENTS[akeys[k - 1]])
         rec = ctx("qualifying", next_key, answered, "N/A", latest, "no")
-        rec["case"] = "qualifying"
+        rec["case"] = "qualifying_first_time" if first_time else "qualifying"
     elif case == "confirming":
-        answers = {"property_use": rng.choice(PROPERTY_USES),
-                   "bankruptcy_past_3yr": "no", "foreclosure_past_2yr": "no",
-                   "late_payments_past_12mo": "no"}
+        answers = base_answers(rng, first_time)
         rec = ctx("confirming", "N/A", answers, "N/A",
-                  rng.choice(ANSWER_FRAGMENTS["late_payments_past_12mo"]), "no")
+                  rng.choice(ANSWER_FRAGMENTS[akeys[-1]]), "no")
         rec["case"] = "confirming"
     elif case == "eligible":
-        answers = {"property_use": rng.choice(PROPERTY_USES),
-                   "bankruptcy_past_3yr": "no", "foreclosure_past_2yr": "no",
-                   "late_payments_past_12mo": "no"}
+        answers = base_answers(rng, first_time)
         rec = ctx("eligible", "N/A", answers, "N/A", "yep that all looks right", "no")
         rec["case"] = "eligible"
     elif case == "ineligible":
-        bad = rng.choice(["bankruptcy_past_3yr", "foreclosure_past_2yr", "late_payments_past_12mo"])
-        answers = {"property_use": rng.choice(PROPERTY_USES),
-                   "bankruptcy_past_3yr": "no", "foreclosure_past_2yr": "no",
-                   "late_payments_past_12mo": "no"}
+        # first-time buyers can only be disqualified by bankruptcy (no foreclosure/late-mortgage)
+        bad = ("bankruptcy_past_3yr" if first_time
+               else rng.choice(["bankruptcy_past_3yr", "foreclosure_past_2yr", "late_payments_past_12mo"]))
+        answers = base_answers(rng, first_time)
         answers[bad] = "yes"
         rec = ctx("ineligible", "N/A", answers, INELIGIBILITY_REASONS[bad],
                   "yeah that's all correct", "no")
