@@ -23,8 +23,9 @@ a rendered CONTEXT block as `user`.
 - **Student model:** `unsloth/Mistral-Small-24B-Instruct-2501` — bf16 LoRA via **Unsloth**. No thinking-mode,
   no VL-tokenizer, clean JSON output; fits easily on the GH200. (Deliberately *not* Qwen3.5 — that arch
   cost us days on the MVP.)
-- **Teacher model (synthetic labeler):** local **`meta-llama/Llama-3.3-70B-Instruct`** on the GH200
-  via vLLM fp8. Free at scale, keeps PII on-box. (Gated on HF — set `HF_TOKEN` before serving.)
+- **Teacher model (synthetic labeler):** local **`nvidia/Llama-3.3-70B-Instruct-FP8`** (pre-quantized FP8)
+  on the GH200 via vLLM. ~70GB download, fits HBM, no online quant. Keeps PII on-box. (Gated on HF —
+  set `HF_TOKEN`.) For a bf16 checkpoint instead, pass it as `$1` and set `QUANT=fp8`.
 
 ## The "everything sounds like a call" fix
 
@@ -117,7 +118,7 @@ cat data/interim/tasks.jsonl data/interim/scenarios.jsonl > data/interim/all_tas
 
 ### 2c. Serve the teacher, then label
 ```bash
-HF_TOKEN=<your_hf_token> bash serve/serve_teacher.sh        # meta-llama/Llama-3.3-70B-Instruct, port 8001
+HF_TOKEN=<your_hf_token> bash serve/serve_teacher.sh        # nvidia/Llama-3.3-70B-Instruct-FP8, port 8001
 # in another shell:
 TEACHER_BASE_URL=http://localhost:8001/v1 TEACHER_MODEL=teacher \
   python3 scripts/label_with_teacher.py data/interim/all_tasks.jsonl \
