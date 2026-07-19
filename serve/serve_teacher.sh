@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-MODEL="${1:-meta-llama/Llama-3.1-70B-Instruct}"
+MODEL="${1:-meta-llama/Llama-3.3-70B-Instruct}"
 vllm serve "$MODEL" \
   --served-model-name teacher \
   --quantization fp8 \
