@@ -1,6 +1,7 @@
 import argparse, json, os, re, sys
-SYS_PROMPT = open(os.path.join(os.path.dirname(__file__), "..", "prompts",
-                                "css_maos_system_prompt.txt"), encoding="utf-8").read()
+_PROMPT_FILE = os.environ.get("TEACHER_PROMPT", os.path.join(
+    os.path.dirname(__file__), "..", "prompts", "css_maos_system_prompt.txt"))
+SYS_PROMPT = open(_PROMPT_FILE, encoding="utf-8").read()
 CTX_FIELDS = ["Stage", "Next question key", "Answers collected", "Ineligibility reason",
               "Agent name", "Client name", "Client's latest message", "Is first message"]
 def render_history(history):

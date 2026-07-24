@@ -1,11 +1,12 @@
-# ChadGPT — 3-Suggestion CSS Agent (v1 rebuild)
+# ChadGPT — Dataset Pipeline (v1 rebuild)
 
-Fine-tune a model that, given a **CONTEXT block**, outputs exactly **3 suggested SMS replies** a
-Customer Service Specialist (CSS) at New American Funding can pick from — the `RecommendationResponse`
-product. This is a clean restart (the old single-reply MVP is archived at
-`~/turn_mom_archive_*`).
+Build the SFT dataset for a model that, given a **CONTEXT block**, outputs exactly **3 suggested SMS
+replies** a Customer Service Specialist (CSS) at New American Funding can pick from — the
+`RecommendationResponse` product. This repo now covers **data only**: clean → rehydrate → build tasks →
+label with the teacher → audit → emit `data/sft/{train,val}.jsonl`. (Training/serving/eval lived here
+previously and were removed; this is the dataset half.)
 
-## The output we're training toward
+## The output each label targets
 
 ```json
 {"recommendations":[
@@ -15,17 +16,14 @@ product. This is a clean restart (the old single-reply MVP is archived at
 ]}
 ```
 
-Input to the model = the full CSS system prompt (`prompts/css_system_prompt.txt`) as `system` +
-a rendered CONTEXT block as `user`.
+Each SFT record = the full CSS system prompt (`prompts/css_system_prompt.txt`) as `system` +
+a rendered CONTEXT block as `user` + the 3-suggestion JSON as `assistant`.
 
-## Decisions
+## Teacher (synthetic labeler)
 
-- **Student model:** `unsloth/Mistral-Small-24B-Instruct-2501` — bf16 LoRA via **Unsloth**. No thinking-mode,
-  no VL-tokenizer, clean JSON output; fits easily on the GH200. (Deliberately *not* Qwen3.5 — that arch
-  cost us days on the MVP.)
-- **Teacher model (synthetic labeler):** local **`nvidia/Llama-3.3-70B-Instruct-FP8`** (pre-quantized FP8)
-  on the GH200 via vLLM. ~70GB download, fits HBM, no online quant. Keeps PII on-box. (Gated on HF —
-  set `HF_TOKEN`.) For a bf16 checkpoint instead, pass it as `$1` and set `QUANT=fp8`.
+Local **`nvidia/Llama-3.3-70B-Instruct-FP8`** (pre-quantized FP8) on the GH200 via vLLM. ~70GB download,
+fits HBM, no online quant. Keeps PII on-box. (Gated on HF — set `HF_TOKEN`.) For a bf16 checkpoint
+instead, pass it as `$1` and set `QUANT=fp8`.
 
 ## The "everything sounds like a call" fix
 
@@ -44,23 +42,22 @@ The old data problem was two things at once, and the fix addresses both:
                             │ clean_bonzo.py                  │ clean_transcript.py
                             ▼                                 ▼
                      {file,source,turns:[{role,text}]}  ── same shape ──┐
-                            │                                            │
+                            │  rehydrate.py (redaction tokens → surrogates)
+                            ▼                                            │
               Stream A ─────┴──── build_label_tasks.py ──► tasks (history + real gold reply)
                                                                  │
   Stream B ── gen_scenarios.py (screening oracle) ──► scenario tasks (deterministic CONTEXT)
                                                                  │
-                            label_with_teacher.py (local 72B) ───┤  infers CONTEXT + writes 3 suggestions
+                            label_with_teacher.py (local 70B) ───┤  infers CONTEXT + writes 3 suggestions
                                                                  ▼        (one anchored on the real reply)
                             audit_gate.py ──► drop guardrail violations
                                                                  ▼
                             to_sft.py ──► data/sft/{train,val}.jsonl  (chat messages)
-                                                                 ▼
-                     train/unsloth_train.py (Mistral-Small-24B bf16 LoRA)
-                                                                 ▼
-                     serve/serve.sh (merge + vLLM :8000, model "naf")
-                                                                 ▼
-                     eval/run_eval.py (schema + guardrail scoring over all stages)
 ```
+
+`run.sh` runs this whole chain end to end (clean → rehydrate → build tasks → label → audit → to_sft).
+`chadgpt_dataset_pipeline.ipynb` is the self-contained make+clean notebook; `clean_dataset.ipynb`
+is the standalone SFT cleaner.
 
 ---
 
@@ -134,25 +131,4 @@ python3 scripts/to_sft.py data/interim/labeled.ok.jsonl \
   --out-train data/sft/train.jsonl --out-val data/sft/val.jsonl --val-frac 0.03
 ```
 Skim `data/interim/rejects.jsonl` — a high reject rate means the teacher prompt needs tightening,
-not that the gate is wrong.
-
-### 2e. Train (stop the teacher first to free HBM)
-```bash
-python3 train/unsloth_train.py \
-  --data data/sft/train.jsonl --val data/sft/val.jsonl \
-  --model unsloth/Mistral-Small-24B-Instruct-2501 --bsz 8 --epochs 3
-```
-
-### 2f. Serve + eval
-```bash
-bash serve/serve.sh out/mistral_naf_lora out/merged      # vLLM :8000, model "naf"
-# another shell:
-python3 eval/run_eval.py --base http://localhost:8000/v1 --model naf
-```
-**Done when:** every stage case passes schema+guardrails AND the three suggestions read like a real rep
-(uneven, varied openers), not AI-symmetric.
-
-## Order of operations on the single GH200
-
-One GPU, so serialize the two big models: **serve teacher → label everything → kill teacher → train student
-→ merge → serve student → eval.** They don't co-reside.
+not that the gate is wrong. The result is `data/sft/{train,val}.jsonl`, ready to hand to training.

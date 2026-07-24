@@ -44,5 +44,4 @@ python3 scripts/to_sft.py "$D/labeled.ok.jsonl" --out-train data/sft/train.jsonl
 leak_check data/sft/train.jsonl
 echo "  train=$(wc -l < data/sft/train.jsonl)  val=$(wc -l < data/sft/val.jsonl)"
 echo
-echo "DONE. Now train:"
-echo "  python3 train/unsloth_train.py --data data/sft/train.jsonl --val data/sft/val.jsonl --model unsloth/Mistral-Small-24B-Instruct-2501 --bsz 8 --epochs 3"
+echo "DONE. SFT dataset ready at data/sft/{train,val}.jsonl — hand off to training."

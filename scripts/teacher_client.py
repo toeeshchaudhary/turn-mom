@@ -3,7 +3,13 @@ BASE = os.environ.get("TEACHER_BASE_URL", "http://localhost:8001/v1")
 MODEL = os.environ.get("TEACHER_MODEL", "teacher")
 KEY = os.environ.get("TEACHER_API_KEY", "dummy")
 TIMEOUT = int(os.environ.get("TEACHER_TIMEOUT", "600"))
-def chat(messages, temperature=0.7, max_tokens=700, json_mode=True, retries=4):
+# Guided JSON decoding (response_format=json_object) forces a per-request grammar that can
+# CPU-bottleneck vLLM and tank throughput. Off by default — the prompt already demands JSON
+# and parse_json() extracts the outer {...}. Re-enable with TEACHER_JSON=1 if outputs drift.
+JSON_MODE = os.environ.get("TEACHER_JSON", "0") == "1"
+def chat(messages, temperature=0.7, max_tokens=700, json_mode=None, retries=4):
+    if json_mode is None:
+        json_mode = JSON_MODE
     body = {
         "model": MODEL,
         "messages": messages,

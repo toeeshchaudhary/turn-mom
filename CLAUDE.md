@@ -1,19 +1,23 @@
-# CLAUDE.md — ChadGPT / turn_mom (v1 rebuild)
+# CLAUDE.md — ChadGPT / turn_mom (dataset pipeline)
 
-Fine-tune a **3-suggestion `RecommendationResponse` CSS agent** for New American Funding (NAF):
-given a CONTEXT block, output exactly 3 pick-able SMS replies + confidence. **Full restart** — the
-old single-reply MVP is archived at `~/turn_mom_archive_<ts>/`. Read `README.md` for the runbook.
+Build the SFT **dataset** for a 3-suggestion `RecommendationResponse` CSS agent for New American Funding
+(NAF): given a CONTEXT block, the target output is exactly 3 pick-able SMS replies + confidence. This repo
+is now **data only** — clean → rehydrate → build tasks → label with the teacher → audit → emit
+`data/sft/{train,val}.jsonl`. Read `README.md` for the runbook. (Training/serving/eval code was removed;
+this is the dataset half.)
 
-## What this is (and isn't)
-- **Target:** `system`(css prompt) + `user`(CONTEXT block) → `assistant` `{"recommendations":[{suggested_message,confidence}x3]}`.
+## What the labels target
+- **Shape:** `system`(css prompt) + `user`(CONTEXT block) → `assistant` `{"recommendations":[{suggested_message,confidence}x3]}`.
 - **Not** a single free-text reply (that was the MVP). The product is always 3 suggestions with stage logic
   (qualifying / confirming / eligible / ineligible + edge cases greeting/casual/logistics/offtopic).
-- The authoritative behavior spec is `prompts/css_system_prompt.txt` (voice rules + stage rules + guardrails).
+- The authoritative behavior spec is `prompts/css_system_prompt.txt` (voice rules + stage rules + guardrails);
+  `prompts/css_maos_system_prompt.txt` is the emotion-first MAOS variant, `prompts/css_teacher_prompt.txt`
+  the labeler instruction.
 
-## Models
-- **Student:** `unsloth/Mistral-Small-24B-Instruct-2501`, bf16 LoRA via Unsloth. Chosen over Qwen3.5 to avoid
-  thinking-mode / VL-tokenizer / hybrid-arch kernel pain from the MVP.
-- **Teacher (synthetic labeler):** local `Qwen2.5-72B-Instruct` (or Llama-3.3-70B) on the GH200, vLLM fp8, :8001.
+## Teacher (synthetic labeler)
+- Local `nvidia/Llama-3.3-70B-Instruct-FP8` (pre-quantized) on the GH200, vLLM :8001, prefix-caching on
+  (gated on HF — set `HF_TOKEN`). `serve/serve_teacher.sh` omits `--quantization` for pre-quantized
+  checkpoints; set `QUANT=fp8` for a bf16 model.
 
 ## Data (R2 bucket `chadgpt-data`)
 - **`Bonzo/` (21,307 json)** — real Agent↔Client **SMS**. `Bonzo/Clean Redacted/` has PII tokens
@@ -24,27 +28,30 @@ old single-reply MVP is archived at `~/turn_mom_archive_<ts>/`. Read `README.md`
 - Ignore for now: `Call Recordings`, `*Recording`, `pipeline-output`, `reports`.
 
 ## Pipeline (scripts/)
-`clean_bonzo.py` / `clean_transcript.py` → `{file,source,turns}` · `build_label_tasks.py` (Stream A: real
-convos → per-agent-turn tasks w/ gold reply) · `gen_scenarios.py` (Stream B: deterministic screening oracle
-→ stage-coverage CONTEXT blocks) · `label_with_teacher.py` (teacher infers CONTEXT + writes 3 suggestions,
-one anchored on the real reply; `--dry-run` stubs it for local testing) · `audit_gate.py` (deterministic
-guardrail drop) · `to_sft.py` (→ chat messages train/val). Train: `train/unsloth_train.py`. Serve:
-`serve/serve.sh` (student), `serve/serve_teacher.sh`. Eval: `eval/run_eval.py` over `eval/cases.jsonl`.
+`clean_bonzo.py` / `clean_transcript.py` → `{file,source,turns}` · `rehydrate.py` (redaction tokens →
+realistic surrogates, BEFORE anything sees them — else the model learns to emit `{NAME}` literally) ·
+`build_label_tasks.py` (Stream A: real convos → per-agent-turn tasks w/ gold reply) · `gen_scenarios.py`
+(Stream B: deterministic screening oracle → stage-coverage CONTEXT blocks) · `gen_maos_scenarios.py`
+(emotion-first MAOS scenarios) · `label_with_teacher.py` (teacher infers CONTEXT + writes 3 suggestions,
+one anchored on the real reply; `--dry-run` stubs it for local testing) · `label_offline.py` (batched
+offline labeling) · `audit_gate.py` (deterministic guardrail drop) · `to_sft.py` (→ chat messages
+train/val). `run.sh` runs the whole chain. Helpers: `mine_bonzo.py`, `crosscheck_labels.py`, `stats.py`,
+`01_pull_data.sh`.
 
 ## Screening oracle (the 4 keys, in order)
 `property_use, bankruptcy_past_3yr, foreclosure_past_2yr, late_payments_past_12mo`. Ineligible if any of the
 last three is "yes" (reasons: `bankruptcy_within_3yr` / `foreclosure_within_2yr` / `late_mortgage_within_12mo`);
-`property_use` is informational, never disqualifying. Kept in `gen_scenarios.py` — keep it in sync with the prompt.
+`property_use` is informational, never disqualifying. First-time buyers skip foreclosure & late-mortgage.
+Kept in `gen_scenarios.py` — keep it in sync with the prompt.
 
 ## Machines
 - **Local** (`~/Documents/turn_mom`): build/test scripts on 1–3 samples only (`--dry-run`, `_samples/`). Never bulk-download 21k files here.
-- **GH200 box** (`/var/turn-mom`, root@GPU, 45.76.248.215): ~95GB HBM, aarch64/Grace, CUDA 13. All real pull/label/train/serve/eval runs. One GPU → serialize teacher then student (they don't co-reside).
+- **GH200 box** (`/var/turn-mom`, root@GPU, 45.76.248.215): ~95GB HBM, aarch64/Grace, CUDA 13. All real pull/label runs.
+  Serving vLLM caps at ~95 tok/s (~0.28 tasks/s) for teacher labeling — host-bound; a 28k relabel ≈ 28h.
 
 ## Gotchas
-- **CPU-only torch on aarch64** = training on CPU (35s/it). `pip install torch --index-url https://download.pytorch.org/whl/cu128`, verify `torch.cuda.is_available()`.
-- **One GH200**: serve teacher → label everything → **kill teacher** → train → merge → serve student. 72B + 24B do not co-reside.
 - **Teacher JSON drift**: `label_with_teacher.py` parses the outermost `{...}` and requests `response_format=json_object`. Always dry-run a `--limit 200` and eyeball voice before a full label run.
-- **Assistant-only loss** (`train_on_responses_only`, markers `[INST]`/`[/INST]`) — don't train on the long fixed system prompt.
+- **Rehydrate first**: run `rehydrate.py` before labeling so the teacher never sees `{NAME_GIVEN}` tokens.
 - **R2 creds were pasted in chat — rotate them.**
 
 ## Conventions
